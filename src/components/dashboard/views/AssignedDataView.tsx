@@ -148,7 +148,33 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
       .order("created_at", { ascending: false });
 
     if (!error && data) {
-      const companiesWithSortedComments = data.map((company) => ({
+      // Filter out companies assigned for more than 24 hours
+      const now = Date.now();
+      const filteredData = data.filter((company: any) => {
+        if (!company.assigned_at) return true; // Keep companies without assigned_at
+        const assignedAt = new Date(company.assigned_at).getTime();
+        const hoursSinceAssignment = (now - assignedAt) / (1000 * 60 * 60);
+        return hoursSinceAssignment < 24;
+      });
+
+      // If any companies are older than 24 hours, auto-unassign them
+      const outdatedCompanies = data.filter((company: any) => {
+        if (!company.assigned_at) return false;
+        const assignedAt = new Date(company.assigned_at).getTime();
+        const hoursSinceAssignment = (now - assignedAt) / (1000 * 60 * 60);
+        return hoursSinceAssignment >= 24;
+      });
+
+      if (outdatedCompanies.length > 0) {
+        // Unassign companies older than 24 hours
+        const outdatedIds = outdatedCompanies.map((c: any) => c.id);
+        await supabase
+          .from("companies")
+          .update({ assigned_to_id: null, assigned_at: null })
+          .in("id", outdatedIds);
+      }
+
+      const companiesWithSortedComments = filteredData.map((company) => ({
         ...company,
         comments:
           company.comments?.sort(
