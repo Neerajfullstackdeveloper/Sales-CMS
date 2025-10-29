@@ -106,8 +106,8 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
         const parsed = JSON.parse(stored);
         const timePassed = Date.now() - parsed.timestamp;
 
-        // 👇 If less than 30 minutes, load from localStorage instead of fetching again
-        if (timePassed < 30 * 60 * 1000) {
+        // 👇 If less than 15 minutes, load from localStorage instead of fetching again
+        if (timePassed < 15 * 60 * 1000) {
           setCompanies(parsed.data);
           setLoading(false);
           return;
@@ -195,11 +195,11 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
         })
       );
 
-      // 👇 Automatically clear from UI and localStorage after 30 mins
+      // 👇 Automatically clear from UI and localStorage after 15 mins
       setTimeout(() => {
         setCompanies([]);
         localStorage.removeItem(`assignedCompanies_${userId}`);
-      }, 30 * 60 * 1000);
+      }, 15 * 60 * 1000);
     }
 
     setLoading(false);
