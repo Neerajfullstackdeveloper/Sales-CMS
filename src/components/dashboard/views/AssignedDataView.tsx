@@ -99,29 +99,22 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const checkLocalData = async () => {
+    const loadAndRefresh = async () => {
       const stored = localStorage.getItem(`assignedCompanies_${userId}`);
-
       if (stored) {
-        const parsed = JSON.parse(stored);
-        const timePassed = Date.now() - parsed.timestamp;
-
-        // 👇 If less than 15 minutes, load from localStorage instead of fetching again
-        if (timePassed < 15 * 60 * 1000) {
-          setCompanies(parsed.data);
-          setLoading(false);
-          return;
-        } else {
-          // Remove expired data
-          localStorage.removeItem(`assignedCompanies_${userId}`);
-        }
+        try {
+          const parsed = JSON.parse(stored);
+          if (parsed?.data) {
+            setCompanies(parsed.data);
+          }
+        } catch {}
       }
 
-      // Otherwise fetch fresh data
+      // Always revalidate with server to avoid stale cache
       await fetchAssignedCompanies();
     };
 
-    checkLocalData();
+    loadAndRefresh();
   }, [userId]);
 
   const fetchAssignedCompanies = async () => {
