@@ -63,16 +63,23 @@ const Auth = () => {
 
       if (error) throw error;
 
-      // Insert the selected role into user_roles table
+      // Assign role:
+      // - If role is 'admin', the DB trigger auto-assigns it. Skip manual insert.
+      // - Otherwise, insert selected role. Ignore duplicates (409/23505).
       if (data.user) {
-        const { error: roleError } = await supabase
-          .from("user_roles")
-          .insert({
-            user_id: data.user.id,
-            role: signupRole,
-          });
+        let roleError: any | null = null;
 
-        if (roleError) {
+        if (signupRole !== "admin") {
+          const insertRes = await supabase
+            .from("user_roles")
+            .insert({
+              user_id: data.user.id,
+              role: signupRole,
+            });
+          roleError = insertRes.error || null;
+        }
+
+        if (roleError && roleError.code !== "23505") {
           console.error("Error assigning role:", roleError);
           toast.error("Account created but role assignment failed. Please contact admin.");
         } else {
