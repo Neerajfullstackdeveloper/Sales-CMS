@@ -2,7 +2,7 @@ import { User } from "@supabase/supabase-js";
 import { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { LogOut, Menu } from "lucide-react";
+import { LogOut, Menu, RefreshCw } from "lucide-react";
 import { LucideIcon } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 
@@ -32,8 +32,20 @@ const DashboardLayout = ({
   const SidebarContent = () => (
     <>
       <div className="p-6 border-b border-sidebar-border">
-        <h1 className="text-2xl font-bold">CRM System</h1>
-        <p className="text-sm mt-1">{user.email}</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">CRM System</h1>
+            <p className="text-sm mt-1">{user.email}</p>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => window.location.reload()}
+            title="Refresh data"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
       <ScrollArea className="flex-1 px-3 py-4">
         <div className="space-y-1">
@@ -72,7 +84,17 @@ const DashboardLayout = ({
       {/* Mobile Header & Sidebar */}
       <div className="md:hidden">
         <div className="flex items-center justify-between p-4 border-b bg-card">
-          <h1 className="text-xl font-bold text-primary">CRM System</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold text-primary">CRM System</h1>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => window.location.reload()}
+              title="Refresh data"
+            >
+              <RefreshCw className="h-5 w-5" />
+            </Button>
+          </div>
           <Sheet>
             <SheetTrigger asChild>
               <Button variant="ghost" size="icon">
