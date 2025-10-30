@@ -176,6 +176,12 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
               {company.address}
             </div>
           )}
+          {company.products_services && (
+            <div className="text-muted-foreground">
+              <span className="font-medium">Products & Services:</span>{" "}
+              <span>{company.products_services}</span>
+            </div>
+          )}
           {showAssignedTo && (
             <div className="flex items-center gap-2 text-muted-foreground">
               <span className="font-medium">Assigned to:</span>
