@@ -42,9 +42,9 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
   const menuItems = [
     { id: "assigned", label: "Assigned Data", icon: LayoutDashboard },
     { id: "today", label: "Today Data", icon: Calendar },
-    { id: "followup", label: "Follow Up Data", icon: TrendingUp },
-    { id: "hot", label: "Hot Data", icon: Flame },
-    { id: "block", label: "Block Data", icon: Ban },
+    { id: "followup", label: "Active Pool", icon: TrendingUp },
+    { id: "hot", label: "Prime Pool", icon: Flame },
+    { id: "block", label: "Inactive Pool", icon: Ban },
     { id: "general", label: "General Data", icon: Database },
     { id: "add", label: "Add New Data", icon: Plus },
     { id: "request", label: "Request Data", icon: MessageSquarePlus },

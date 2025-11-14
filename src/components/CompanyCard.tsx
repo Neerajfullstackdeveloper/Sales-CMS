@@ -277,7 +277,7 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
                     {company.comments
                       .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
                       .map((comment: any) => (
-                      <Card key={comment.id} className="p-4">
+                      <Card key={comment.id} className="p-4 bg-gray-500 hover:bg-gray-100 transition-colors duration-300">
                         <div className="flex items-start justify-between mb-3">
                           <div className="flex items-center gap-2">
                             <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
