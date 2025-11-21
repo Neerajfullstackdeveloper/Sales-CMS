@@ -4,4 +4,4 @@ import App from "./App.tsx";
 import "./index.css";
 import "./jsx-global.js";
 
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(<App className="bg-[#1D3FAE]" />);
