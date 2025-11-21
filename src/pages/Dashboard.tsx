@@ -68,7 +68,7 @@ const Dashboard = () => {
   }
 
   return (
-    <>
+    < className="bg-[#1D3FAE]">
       {userRole === "admin" && <AdminDashboard user={user!} />}
       {userRole === "team_lead" && <TeamLeadDashboard user={user!} />}
       {userRole === "employee" && <EmployeeDashboard user={user!} />}
