@@ -31,11 +31,11 @@ const DashboardLayout = ({
 }: DashboardLayoutProps) => {
   const SidebarContent = () => (
     <>
-      <div className="p-6 border-b border-sidebar-border">
-        <div className="flex items-center justify-between">
+      <div className="p-6 border-b border-sidebar-border text-white">
+        <div className="flex items-center justify-between ">
           <div>
-            <h1 className="text-2xl font-bold">CRM System</h1>
-            <p className="text-sm mt-1">{user.email}</p>
+            <h1 className="text-2xl font-bold text-white">CRM System</h1>
+            <p className="text-sm mt-1 text-white">{user.email}</p>
           </div>
           <Button
             variant="ghost"
@@ -66,8 +66,8 @@ const DashboardLayout = ({
         </div>
       </ScrollArea>
       <div className="p-4 border-t border-sidebar-border">
-        <Button variant="ghost" className="w-full justify-start" onClick={onLogout}>
-          <LogOut className="mr-2 h-4 w-4" />
+        <Button variant="ghost" className="w-full justify-start text-white" onClick={onLogout}>
+          <LogOut className="mr-2 h-4 w-4 text-white" />
           Logout
         </Button>
       </div>
