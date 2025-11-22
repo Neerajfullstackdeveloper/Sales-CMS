@@ -167,8 +167,8 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
             <UserCheck className="h-6 w-6 text-primary" />
           </div>
           <div>
-            <h2 className="text-3xl font-bold tracking-tight">Assigned Data</h2>
-            <p className="text-sm text-muted-foreground mt-1">
+            <h2 className="text-3xl font-bold tracking-tight text-white">Assigned Data</h2>
+            <p className="text-sm text-muted-foreground mt-1 text-white">
               Companies assigned to you (auto-unassigned after 24 hours)
             </p>
           </div>
