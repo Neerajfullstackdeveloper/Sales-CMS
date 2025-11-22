@@ -77,7 +77,7 @@ const DashboardLayout = ({
   return (
     <div className="flex h-screen bg-background">
       {/* Desktop Sidebar */}
-      <aside className="hidden md:flex md:w-64 flex-col bg-sidebar-background border-r border-sidebar-border">
+      <aside className="hidden md:flex md:w-64 flex-col bg-sidebar-background border-r border-sidebar-border text-white">
         <SidebarContent />
       </aside>
 

@@ -61,7 +61,7 @@ const AllCompaniesView = ({ userRole }: AllCompaniesViewProps) => {
 
   return (
     <div>
-      <h2 className="text-3xl font-bold mb-6">All Companies</h2>
+      <h2 className="text-3xl font-bold mb-6 text-white">All Companies</h2>
       {companies.length === 0 ? (
         <p className="text-muted-foreground">No companies in the system yet.</p>
       ) : (
