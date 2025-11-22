@@ -4,6 +4,10 @@
   padding: 2rem;
   text-align: center;
 }
+body {
+    background-color: hsl(var(--background));
+    color: hsl(0deg 0% 100%);
+}
 *{
   color: white;
 }
