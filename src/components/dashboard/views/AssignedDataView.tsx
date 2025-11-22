@@ -175,7 +175,7 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
         </div>
         {companies.length > 0 && (
           <div className="px-4 py-2 bg-primary/10 rounded-full">
-            <span className="text-sm font-semibold text-primary">{companies.length} {companies.length === 1 ? 'company' : 'companies'}</span>
+            <span className="text-sm font-semibold text-primary text-white">{companies.length} {companies.length === 1 ? 'company' : 'companies'}</span>
           </div>
         )}
       </div>

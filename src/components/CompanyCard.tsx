@@ -232,7 +232,7 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
         <div className="flex gap-2 pt-2">
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-              <Button variant="outline" className="flex-1 hover:bg-primary hover:text-primary-foreground transition-colors">
+              <Button variant="outline" className="flex-1 hover:bg-primary hover:text-primary-foreground transition-colors text-white">
                 <MessageSquare className="mr-2 h-4 w-4" />
                 Add Comment
               </Button>
