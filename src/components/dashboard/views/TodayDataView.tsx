@@ -97,7 +97,7 @@ const TodayDataView = ({ userId, userRole }: TodayDataViewProps) => {
       <div className="space-y-6">
         <div className="flex items-center gap-3">
           <Calendar className="h-8 w-8 text-primary" />
-          <h2 className="text-3xl font-bold">Today's Data</h2>
+          <h2 className="text-3xl font-bold text-white">Today's Data</h2>
         </div>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {[...Array(6)].map((_, i) => (

@@ -240,13 +240,13 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
             <DialogContent className="sm:max-w-[500px]">
               <DialogHeader>
                 <DialogTitle className="text-xl flex items-center gap-2">
-                  <Building2 className="h-5 w-5 text-primary" />
+                  <Building2 className="h-5 w-5 text-primary text-white" />
                   Add Comment - {company.company_name}
                 </DialogTitle>
               </DialogHeader>
               <div className="space-y-5 mt-4">
                 <div className="space-y-2">
-                  <label className="text-sm font-semibold text-foreground">Comment</label>
+                  <label className="text-sm font-semibold text-foreground text-white">Comment</label>
                   <Textarea
                     value={commentText}
                     onChange={(e) => setCommentText(e.target.value)}
@@ -257,7 +257,7 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <label className="text-sm font-semibold text-foreground">Date (optional)</label>
+                    <label className="text-sm font-semibold text-foreground text-white">Date (optional)</label>
                     <Input
                       type="date"
                       value={commentDate}
@@ -266,7 +266,7 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-semibold text-foreground">Category</label>
+                    <label className="text-sm font-semibold text-foreground text-white">Category</label>
                     <Select value={category} onValueChange={setCategory}>
                       <SelectTrigger>
                         <SelectValue />
@@ -274,22 +274,22 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
                       <SelectContent>
                         <SelectItem value="follow_up">
                           <span className="flex items-center gap-2">
-                            {getCategoryIcon('follow_up')} Follow Up
+                            {getCategoryIcon('follow_up')} Active Pool
                           </span>
                         </SelectItem>
                         <SelectItem value="hot">
                           <span className="flex items-center gap-2">
-                            {getCategoryIcon('hot')} Hot
+                            {getCategoryIcon('hot')} Prime Pool
                           </span>
                         </SelectItem>
                         <SelectItem value="block">
                           <span className="flex items-center gap-2">
-                            {getCategoryIcon('block')} Block
+                            {getCategoryIcon('block')} Inactive Pool
                           </span>
                         </SelectItem>
                         <SelectItem value="general">
                           <span className="flex items-center gap-2">
-                            {getCategoryIcon('general')} General
+                            {getCategoryIcon('general')} General Data
                           </span>
                         </SelectItem>
                       </SelectContent>
