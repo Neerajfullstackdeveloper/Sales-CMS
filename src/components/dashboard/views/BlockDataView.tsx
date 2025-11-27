@@ -74,10 +74,12 @@ const BlockDataView = ({ userId, userRole }: BlockDataViewProps) => {
       const blockCompanies = userCompanies.filter(company => {
         if (!company.comments || company.comments.length === 0) return false;
         // Sort comments by created_at descending and get the latest
-        const latestComment = company.comments.sort((a: any, b: any) => 
+        const sortedComments = [...company.comments].sort((a: any, b: any) => 
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        )[0];
-        return latestComment.category === "block";
+        );
+        const latestComment = sortedComments[0];
+        // Ensure we have a valid category and it matches block
+        return latestComment && latestComment.category === "block";
       });
       
       // Ensure comments are properly sorted for each company
