@@ -57,16 +57,40 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
 
   const lastComment = company.comments?.[0];
   
-  // Set default category based on the last comment
+  // Reset form when dialog opens/closes
   React.useEffect(() => {
-    if (lastComment?.category) {
-      setCategory(lastComment.category);
+    if (open) {
+      // When dialog opens, set category to last comment's category or default to general
+      if (lastComment?.category) {
+        setCategory(lastComment.category);
+      } else {
+        setCategory("general");
+      }
+      setCommentText("");
+      setCommentDate("");
+    } else {
+      // Reset when dialog closes
+      setCommentText("");
+      setCommentDate("");
+      // Keep category as last comment's category for next time
+      if (lastComment?.category) {
+        setCategory(lastComment.category);
+      } else {
+        setCategory("general");
+      }
     }
-  }, [lastComment?.category]);
+  }, [open, lastComment?.category]);
 
   const handleAddComment = async () => {
     if (!commentText.trim()) {
       toast.error("Please enter a comment");
+      return;
+    }
+
+    // Validate category
+    const validCategories = ["follow_up", "hot", "block", "general"];
+    if (!validCategories.includes(category)) {
+      toast.error("Please select a valid category");
       return;
     }
 
@@ -77,29 +101,37 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
       // Check if category is changing
       const isCategoryChanging = lastComment?.category && lastComment.category !== category;
       
+      // Ensure category is properly formatted
+      const commentCategory = category as "follow_up" | "hot" | "block" | "general";
+      
       const { error } = await supabase.from("comments").insert([
         {
           company_id: company.id,
           user_id: userData.user?.id,
-          comment_text: commentText,
-          category: category as "follow_up" | "hot" | "block" | "general",
+          comment_text: commentText.trim(),
+          category: commentCategory,
           comment_date: commentDate || null,
         },
       ]);
 
-      if (error) throw error;
+      if (error) {
+        console.error("Error adding comment:", error);
+        throw error;
+      }
 
       if (isCategoryChanging) {
         toast.success(`Comment added successfully! Company moved from ${lastComment.category.replace('_', ' ')} to ${category.replace('_', ' ')} category.`);
       } else {
-        toast.success("Comment added successfully!");
+        toast.success(`Comment added successfully! Category: ${category.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}`);
       }
       
       setCommentText("");
       setCommentDate("");
       setOpen(false);
+      // Refresh the data
       onUpdate();
     } catch (error: any) {
+      console.error("Failed to add comment:", error);
       toast.error(error.message || "Failed to add comment");
     } finally {
       setLoading(false);
@@ -232,7 +264,7 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
         <div className="flex gap-2 pt-2">
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-              <Button variant="outline" className="flex-1 hover:bg-primary hover:text-primary-foreground transition-colors text-white">
+              <Button variant="outline" className="flex-1 hover:bg-primary hover:text-primary-foreground transition-colors">
                 <MessageSquare className="mr-2 h-4 w-4" />
                 Add Comment
               </Button>
@@ -240,13 +272,13 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
             <DialogContent className="sm:max-w-[500px]">
               <DialogHeader>
                 <DialogTitle className="text-xl flex items-center gap-2">
-                  <Building2 className="h-5 w-5 text-primary text-white" />
+                  <Building2 className="h-5 w-5 text-primary" />
                   Add Comment - {company.company_name}
                 </DialogTitle>
               </DialogHeader>
               <div className="space-y-5 mt-4">
                 <div className="space-y-2">
-                  <label className="text-sm font-semibold text-foreground text-white">Comment</label>
+                  <label className="text-sm font-semibold text-foreground">Comment</label>
                   <Textarea
                     value={commentText}
                     onChange={(e) => setCommentText(e.target.value)}
@@ -257,7 +289,7 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <label className="text-sm font-semibold text-foreground text-white">Date (optional)</label>
+                    <label className="text-sm font-semibold text-foreground">Date (optional)</label>
                     <Input
                       type="date"
                       value={commentDate}
@@ -266,34 +298,48 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-semibold text-foreground text-white">Category</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-semibold text-foreground">Category</label>
+                      {lastComment && (
+                        <span className="text-xs text-muted-foreground">
+                          Current: {getCategoryIcon(lastComment.category)} {lastComment.category.replace('_', ' ')}
+                        </span>
+                      )}
+                    </div>
                     <Select value={category} onValueChange={setCategory}>
-                      <SelectTrigger>
-                        <SelectValue />
+                      <SelectTrigger className="w-full">
+                        <SelectValue>
+                          <span className="flex items-center gap-2">
+                            {getCategoryIcon(category)} {category.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                          </span>
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="follow_up">
                           <span className="flex items-center gap-2">
-                            {getCategoryIcon('follow_up')} Active Pool
+                            {getCategoryIcon('follow_up')} Follow Up
                           </span>
                         </SelectItem>
                         <SelectItem value="hot">
                           <span className="flex items-center gap-2">
-                            {getCategoryIcon('hot')} Prime Pool
+                            {getCategoryIcon('hot')} Hot
                           </span>
                         </SelectItem>
                         <SelectItem value="block">
                           <span className="flex items-center gap-2">
-                            {getCategoryIcon('block')} Inactive Pool
+                            {getCategoryIcon('block')} Block
                           </span>
                         </SelectItem>
                         <SelectItem value="general">
                           <span className="flex items-center gap-2">
-                            {getCategoryIcon('general')} General Data
+                            {getCategoryIcon('general')} General
                           </span>
                         </SelectItem>
                       </SelectContent>
                     </Select>
+                    <p className="text-xs text-muted-foreground">
+                      This will update the company's category to: <span className="font-semibold text-foreground">{getCategoryIcon(category)} {category.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
+                    </p>
                   </div>
                 </div>
                 <Button 
