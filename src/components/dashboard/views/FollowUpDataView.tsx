@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import CompanyCard from "@/components/CompanyCard";
-import { Loader2, Flame, Inbox } from "lucide-react";
+import { Loader2, CalendarCheck, Inbox } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
-interface HotDataViewProps {
+interface FollowUpDataViewProps {
   userId: string;
   userRole?: string;
 }
@@ -36,15 +36,15 @@ const CompanyCardSkeleton = () => (
   </Card>
 );
 
-const HotDataView = ({ userId, userRole }: HotDataViewProps) => {
+const FollowUpDataView = ({ userId, userRole }: FollowUpDataViewProps) => {
   const [companies, setCompanies] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchHotData();
+    fetchFollowUpData();
   }, [userId]);
 
-  const fetchHotData = async () => {
+  const fetchFollowUpData = async () => {
     setLoading(true);
     
     // First get all companies assigned to the user
@@ -70,18 +70,20 @@ const HotDataView = ({ userId, userRole }: HotDataViewProps) => {
       .order("created_at", { ascending: false });
 
     if (!companiesError && userCompanies) {
-      // Filter companies where the latest comment has "hot" category
-      const hotCompanies = userCompanies.filter(company => {
+      // Filter companies where the latest comment has "follow_up" category
+      const followUpCompanies = userCompanies.filter(company => {
         if (!company.comments || company.comments.length === 0) return false;
         // Sort comments by created_at descending and get the latest
-        const latestComment = company.comments.sort((a: any, b: any) => 
+        const sortedComments = [...company.comments].sort((a: any, b: any) => 
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        )[0];
-        return latestComment.category === "hot";
+        );
+        const latestComment = sortedComments[0];
+        // Ensure we have a valid category and it matches follow_up
+        return latestComment && latestComment.category === "follow_up";
       });
       
       // Ensure comments are properly sorted for each company
-      const companiesWithSortedComments = hotCompanies.map(company => ({
+      const companiesWithSortedComments = followUpCompanies.map(company => ({
         ...company,
         comments: company.comments?.sort((a: any, b: any) => 
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
@@ -97,8 +99,8 @@ const HotDataView = ({ userId, userRole }: HotDataViewProps) => {
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-3">
-          <Flame className="h-8 w-8 text-primary" />
-          <h2 className="text-3xl font-bold">Hot Data</h2>
+          <CalendarCheck className="h-8 w-8 text-primary" />
+          <h2 className="text-3xl font-bold">Follow Up Data</h2>
         </div>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {[...Array(6)].map((_, i) => (
@@ -113,19 +115,19 @@ const HotDataView = ({ userId, userRole }: HotDataViewProps) => {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-red-100 rounded-lg">
-            <Flame className="h-6 w-6 text-red-600" />
+          <div className="p-2 bg-orange-100 rounded-lg">
+            <CalendarCheck className="h-6 w-6 text-orange-600" />
           </div>
           <div>
-            <h2 className="text-3xl font-bold tracking-tight">Hot Data</h2>
+            <h2 className="text-3xl font-bold tracking-tight">Follow Up Data</h2>
             <p className="text-sm text-muted-foreground mt-1">
-              High-priority companies requiring immediate attention
+              Companies requiring follow-up actions
             </p>
           </div>
         </div>
         {companies.length > 0 && (
-          <div className="px-4 py-2 bg-red-100 rounded-full">
-            <span className="text-sm font-semibold text-red-600">{companies.length} {companies.length === 1 ? 'company' : 'companies'}</span>
+          <div className="px-4 py-2 bg-orange-100 rounded-full">
+            <span className="text-sm font-semibold text-orange-600">{companies.length} {companies.length === 1 ? 'company' : 'companies'}</span>
           </div>
         )}
       </div>
@@ -135,9 +137,9 @@ const HotDataView = ({ userId, userRole }: HotDataViewProps) => {
             <div className="p-4 bg-muted rounded-full mb-4">
               <Inbox className="h-8 w-8 text-muted-foreground" />
             </div>
-            <h3 className="text-lg font-semibold mb-2">No hot companies</h3>
+            <h3 className="text-lg font-semibold mb-2">No follow-up companies</h3>
             <p className="text-sm text-muted-foreground text-center max-w-sm">
-              There are no companies marked as hot. Add comments with the hot category to see them here.
+              There are no companies in follow-up status. Add comments with the follow-up category to see them here.
             </p>
           </CardContent>
         </Card>
@@ -147,7 +149,7 @@ const HotDataView = ({ userId, userRole }: HotDataViewProps) => {
             <CompanyCard
               key={company.id}
               company={company}
-              onUpdate={fetchHotData}
+              onUpdate={fetchFollowUpData}
               canDelete={true}
               userRole={userRole}
             />
@@ -158,4 +160,4 @@ const HotDataView = ({ userId, userRole }: HotDataViewProps) => {
   );
 };
 
-export default HotDataView;
+export default FollowUpDataView;
