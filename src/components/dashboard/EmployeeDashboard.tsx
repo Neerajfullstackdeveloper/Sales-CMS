@@ -14,9 +14,11 @@ import {
   Plus,
   MessageSquarePlus,
   LogOut,
+  Share2,
 } from "lucide-react";
 import DashboardLayout from "./DashboardLayout";
 import AssignedDataView from "./views/AssignedDataView";
+import FacebookDataView from "./views/FacebookDataView";
 import TodayDataView from "./views/TodayDataView";
 import FollowUpDataView from "./views/FollowUpDataView";
 import HotDataView from "./views/HotDataView";
@@ -41,6 +43,7 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
 
   const menuItems = [
     { id: "assigned", label: "Assigned Data", icon: LayoutDashboard },
+    { id: "facebook", label: "Facebook Data", icon: Share2 },
     { id: "today", label: "Today Data", icon: Calendar },
     { id: "followup", label: "Active Pool", icon: TrendingUp },
     { id: "hot", label: "Prime Pool", icon: Flame },
@@ -59,6 +62,7 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
       onLogout={handleLogout}
     >
       {currentView === "assigned" && <AssignedDataView userId={user.id} userRole="employee" />}
+      {currentView === "facebook" && <FacebookDataView userId={user.id} userRole="employee" />}
       {currentView === "today" && <TodayDataView userId={user.id} userRole="employee" />}
       {currentView === "followup" && <FollowUpDataView userId={user.id} userRole="employee" />}
       {currentView === "hot" && <HotDataView userId={user.id} userRole="employee" />}

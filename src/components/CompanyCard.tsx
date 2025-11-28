@@ -317,22 +317,22 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
                       <SelectContent>
                         <SelectItem value="follow_up">
                           <span className="flex items-center gap-2">
-                            {getCategoryIcon('follow_up')} Follow Up
+                            {getCategoryIcon('follow_up')} Active Pool
                           </span>
                         </SelectItem>
                         <SelectItem value="hot">
                           <span className="flex items-center gap-2">
-                            {getCategoryIcon('hot')} Hot
+                            {getCategoryIcon('hot')} Prime Pool
                           </span>
                         </SelectItem>
                         <SelectItem value="block">
                           <span className="flex items-center gap-2">
-                            {getCategoryIcon('block')} Block
+                            {getCategoryIcon('block')} Inactive Pool
                           </span>
                         </SelectItem>
                         <SelectItem value="general">
                           <span className="flex items-center gap-2">
-                            {getCategoryIcon('general')} General
+                            {getCategoryIcon('general')} General Data
                           </span>
                         </SelectItem>
                       </SelectContent>

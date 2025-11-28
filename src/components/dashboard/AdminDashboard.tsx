@@ -14,6 +14,7 @@ import {
   Settings,
   UserCog,
   Trash2,
+  Share2,
 } from "lucide-react";
 import DashboardLayout from "./DashboardLayout";
 import AllCompaniesView from "./views/AllCompaniesView";
@@ -23,6 +24,7 @@ import DataRequestsView from "./views/DataRequestsView";
 import HolidaysView from "./views/HolidaysView";
 import AddNewDataView from "./views/AddNewDataView";
 import AdminDataAssignmentView from "./views/AdminDataAssignmentView";
+import FacebookDataView from "./views/FacebookDataView";
 import RecycleBinView from "./views/RecycleBinView";
 
 interface AdminDashboardProps {
@@ -43,6 +45,7 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
     { id: "companies", label: "All Companies", icon: Building2 },
     { id: "add", label: "Add Company", icon: Plus },
     { id: "assign", label: "Assign Data", icon: UserCog },
+    { id: "facebook", label: "Facebook Data", icon: Share2 },
     { id: "employees", label: "Employee Management", icon: Users },
     { id: "teams", label: "Team Creation", icon: UserPlus },
     { id: "requests", label: "Data Requests", icon: MessageSquare },
@@ -61,6 +64,7 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
       {currentView === "companies" && <AllCompaniesView userRole="admin" />}
       {currentView === "add" && <AddNewDataView userId={user.id} />}
       {currentView === "assign" && <AdminDataAssignmentView />}
+      {currentView === "facebook" && <FacebookDataView userId={user.id} userRole="admin" />}
       {currentView === "employees" && <EmployeeManagementView />}
       {currentView === "teams" && <TeamCreationView />}
       {currentView === "requests" && <DataRequestsView />}
