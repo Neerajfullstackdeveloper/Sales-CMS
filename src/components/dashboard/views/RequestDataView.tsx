@@ -69,7 +69,7 @@ const RequestDataView = ({ userId }: RequestDataViewProps) => {
 
   return (
     <div className="max-w-4xl mx-auto">
-      <h2 className="text-3xl font-bold mb-6">Request Data</h2>
+      <h2 className="text-3xl font-bold mb-6 text-white">Request Data</h2>
       
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
@@ -77,7 +77,7 @@ const RequestDataView = ({ userId }: RequestDataViewProps) => {
             <CardTitle>Send New Request</CardTitle>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} className="space-y-4 text-white">
               <div className="space-y-2">
                 <Label htmlFor="requestType">Request Type</Label>
                 <Select value={requestType} onValueChange={setRequestType}>
@@ -85,7 +85,7 @@ const RequestDataView = ({ userId }: RequestDataViewProps) => {
                     <SelectValue placeholder="Select request type" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="general">General Data Request</SelectItem>
+                    <SelectItem value="general" >General Data Request</SelectItem>
                     <SelectItem value="facebook">Facebook Data Request</SelectItem>
                   </SelectContent>
                 </Select>
@@ -113,7 +113,7 @@ const RequestDataView = ({ userId }: RequestDataViewProps) => {
                 </div>
               )}
               
-              <div className="flex gap-2">
+              <div className="flex gap-2 ">
                 <Button type="submit" className="flex-1" disabled={loading}>
                   {loading ? (
                     <>
@@ -129,9 +129,9 @@ const RequestDataView = ({ userId }: RequestDataViewProps) => {
                     type="button"
                     variant="outline"
                     onClick={handleQuickFacebookRequest}
-                    className="flex items-center gap-2"
+                    className="flex items-center gap-2 text-white"
                   >
-                    <Share2 className="h-4 w-4" />
+                    <Share2 className="h-4 w-4 text-white" />
                     Facebook
                   </Button>
                 )}

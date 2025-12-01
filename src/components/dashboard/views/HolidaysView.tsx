@@ -76,7 +76,7 @@ const HolidaysView = () => {
 
   return (
     <div className="max-w-4xl mx-auto">
-      <h2 className="text-3xl font-bold mb-6">Holidays Management</h2>
+      <h2 className="text-3xl font-bold mb-6 text-white">Holidays Management</h2>
       
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>

@@ -62,7 +62,7 @@ const EmployeeManagementView = () => {
 
   return (
     <div className="max-w-4xl mx-auto">
-      <h2 className="text-3xl font-bold mb-6">Employee Management</h2>
+      <h2 className="text-3xl font-bold mb-6 text-white">Employee Management</h2>
       
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
@@ -70,8 +70,8 @@ const EmployeeManagementView = () => {
             <CardTitle>Assign Role</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Select Employee</label>
+            <div className="space-y-2 text-white">
+              <label className="text-sm font-medium text-black">Select Employee</label>
               <Select value={selectedUser} onValueChange={setSelectedUser}>
                 <SelectTrigger>
                   <SelectValue placeholder="Choose an employee" />
@@ -86,8 +86,8 @@ const EmployeeManagementView = () => {
               </Select>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Select Role</label>
+            <div className="space-y-2 text-white">
+              <label className="text-sm font-medium text-black">Select Role</label>
               <Select value={selectedRole} onValueChange={setSelectedRole}>
                 <SelectTrigger>
                   <SelectValue placeholder="Choose a role" />

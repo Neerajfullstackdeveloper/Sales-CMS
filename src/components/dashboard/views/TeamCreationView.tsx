@@ -67,7 +67,7 @@ const TeamCreationView = () => {
   };
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-4xl mx-auto text-white ">
       <h2 className="text-3xl font-bold mb-6">Team Creation</h2>
       
       <div className="grid gap-6 lg:grid-cols-2">
@@ -87,8 +87,8 @@ const TeamCreationView = () => {
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label>Team Lead</Label>
+              <div className="space-y-2 text-white">
+                <Label className="text-black">Team Lead</Label>
                 <Select value={selectedTL} onValueChange={setSelectedTL}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select team lead" />

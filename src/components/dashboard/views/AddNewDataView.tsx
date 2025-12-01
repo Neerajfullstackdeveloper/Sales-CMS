@@ -56,21 +56,23 @@ const AddNewDataView = ({ userId }: AddNewDataViewProps) => {
 
   return (
     <div className="max-w-2xl mx-auto">
-      <h2 className="text-3xl font-bold mb-6">Add New Company</h2>
+      <h2 className="text-3xl font-bold mb-6 text-white">Add New Company</h2>
       <Card>
         <CardHeader>
           <CardTitle>Company Information</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
+            <div className="space-y-2 ">
               <Label htmlFor="company_name">Company Name *</Label>
               <Input
                 id="company_name"
                 value={formData.company_name}
                 onChange={(e) =>
                   setFormData({ ...formData, company_name: e.target.value })
+                 
                 }
+                 className="text-white"
                 required
               />
             </div>
@@ -82,6 +84,7 @@ const AddNewDataView = ({ userId }: AddNewDataViewProps) => {
                 onChange={(e) =>
                   setFormData({ ...formData, owner_name: e.target.value })
                 }
+                   className="text-white"
                 required
               />
             </div>
@@ -94,6 +97,7 @@ const AddNewDataView = ({ userId }: AddNewDataViewProps) => {
                 onChange={(e) =>
                   setFormData({ ...formData, phone: e.target.value })
                 }
+                   className="text-white"
                 required
               />
             </div>
@@ -106,6 +110,7 @@ const AddNewDataView = ({ userId }: AddNewDataViewProps) => {
                 onChange={(e) =>
                   setFormData({ ...formData, email: e.target.value })
                 }
+                   className="text-white"
               />
             </div>
             <div className="space-y-2">
@@ -116,6 +121,7 @@ const AddNewDataView = ({ userId }: AddNewDataViewProps) => {
                 onChange={(e) =>
                   setFormData({ ...formData, address: e.target.value })
                 }
+                className="text-white"
               />
             </div>
             <div className="space-y-2">
@@ -126,6 +132,7 @@ const AddNewDataView = ({ userId }: AddNewDataViewProps) => {
                 onChange={(e) =>
                   setFormData({ ...formData, products_services: e.target.value })
                 }
+                className="text-white"
               />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>

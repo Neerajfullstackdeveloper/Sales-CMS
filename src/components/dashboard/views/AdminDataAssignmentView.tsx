@@ -68,15 +68,15 @@ const AdminDataAssignmentView = () => {
 
   return (
     <div className="max-w-2xl mx-auto">
-      <h2 className="text-3xl font-bold mb-6">Assign Data to Employees</h2>
+      <h2 className="text-3xl font-bold mb-6 text-white">Assign Data to Employees</h2>
       
       <Card>
         <CardHeader>
           <CardTitle>Assign Company</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Select Company</label>
+          <div className="space-y-2 text-white">
+            <label className="text-sm font-medium text-black/80">Select Company</label>
             <Select value={selectedCompany} onValueChange={setSelectedCompany}>
               <SelectTrigger>
                 <SelectValue placeholder="Choose a company" />
@@ -91,8 +91,8 @@ const AdminDataAssignmentView = () => {
             </Select>
           </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Select Employee/Team Lead</label>
+          <div className="space-y-2 text-white">
+            <label className="text-sm font-medium text-black/80">Select Employee/Team Lead</label>
             <Select value={selectedEmployee} onValueChange={setSelectedEmployee}>
               <SelectTrigger>
                 <SelectValue placeholder="Choose an employee or team lead" />

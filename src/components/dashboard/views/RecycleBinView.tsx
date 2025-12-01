@@ -177,20 +177,20 @@ const RecycleBinView = ({ userRole }: RecycleBinViewProps) => {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Recycle Bin</h2>
+        <h2 className="text-2xl font-bold text-white">Recycle Bin</h2>
         <Badge variant="secondary" className="text-sm">
           {companies.length} deleted companies
         </Badge>
       </div>
 
-      <div className="flex items-center space-x-2">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+      <div className="flex items-center space-x-2 ">
+        <div className="relative flex-1 max-w-sm ">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4 text-white/80" />
           <Input
             placeholder="Search deleted companies..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
+            className="pl-10 text-white"
           />
         </div>
       </div>

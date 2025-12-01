@@ -96,14 +96,24 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
           ) || [],
       }));
 
-      setCompanies(companiesWithSortedComments);
+      // For employees: filter out companies that have comments (already categorized)
+      // They should only appear in category views, not in Assigned Data section
+      // For admins: show all assigned companies regardless of comments
+      const finalCompanies = userRole === "admin" 
+        ? companiesWithSortedComments
+        : companiesWithSortedComments.filter((company: any) => {
+            // Keep only companies with no comments (uncategorized)
+            return !company.comments || company.comments.length === 0;
+          });
+
+      setCompanies(finalCompanies);
 
       // 👇 Save fetched data and timestamp in localStorage
       localStorage.setItem(
         `assignedCompanies_${userId}`,
         JSON.stringify({
           timestamp: Date.now(),
-          data: companiesWithSortedComments,
+          data: finalCompanies,
         })
       );
 
@@ -148,7 +158,7 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
       <div className="space-y-6">
         <div className="flex items-center gap-3">
           <UserCheck className="h-8 w-8 text-primary" />
-          <h2 className="text-3xl font-bold">Assigned Data</h2>
+          <h2 className="text-3xl font-bold text-white">Assigned Data</h2>
         </div>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {[...Array(6)].map((_, i) => (

@@ -1,16 +1,65 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import CompanyCard from "@/components/CompanyCard";
-import { Loader2, Share2, Inbox } from "lucide-react";
+import { Loader2, Share2, Inbox, User, Mail, Calendar, Trash2, RefreshCw, AlertCircle, Edit, Pencil, MessageSquare, Clock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import FacebookDataCard from "./FacebookDataCard";
 
 interface FacebookDataViewProps {
   userId: string;
   userRole?: string;
 }
 
-const CompanyCardSkeleton = () => (
+interface FacebookData {
+  id: number;
+  name: string | null;
+  email: string | null;
+  phone?: string | null;
+  company_name?: string | null;
+  owner_name?: string | null;
+  products?: string | null;
+  services?: string | null;
+  created_at: string; // Original upload date
+  shared_at?: string | null; // Date when data was shared (for admin dashboard)
+  assigned_to?: {
+    display_name: string;
+    email: string;
+  } | null;
+  comments?: FacebookComment[];
+}
+
+interface FacebookComment {
+  id: string;
+  comment_text: string;
+  category: "follow_up" | "hot" | "block" | "general";
+  comment_date?: string | null;
+  created_at: string;
+  user_id: string;
+  user?: {
+    display_name: string;
+    email: string;
+  };
+}
+
+const FacebookDataCardSkeleton = () => (
   <Card>
     <CardHeader>
       <div className="flex items-start justify-between gap-3">
@@ -25,84 +74,773 @@ const CompanyCardSkeleton = () => (
       <div className="space-y-2">
         <Skeleton className="h-4 w-full" />
         <Skeleton className="h-4 w-5/6" />
-        <Skeleton className="h-4 w-4/6" />
-      </div>
-      <Skeleton className="h-20 w-full rounded-lg" />
-      <div className="flex gap-2">
-        <Skeleton className="h-10 flex-1" />
-        <Skeleton className="h-10 w-10" />
       </div>
     </CardContent>
   </Card>
 );
 
 const FacebookDataView = ({ userId, userRole }: FacebookDataViewProps) => {
-  const [companies, setCompanies] = useState<any[]>([]);
+  const [facebookData, setFacebookData] = useState<FacebookData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [shareIdMap, setShareIdMap] = useState<Record<number, string>>({});
+  const [shareDateMap, setShareDateMap] = useState<Record<number, string>>({});
+  
+  // Edit states for admin
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingData, setEditingData] = useState<FacebookData | null>(null);
+  const [editFormData, setEditFormData] = useState({ name: "", email: "", phone: "" });
+  const [saving, setSaving] = useState(false);
+  
+  // Edit request states for employees
+  const [editRequestDialogOpen, setEditRequestDialogOpen] = useState(false);
+  const [requestingEditData, setRequestingEditData] = useState<FacebookData | null>(null);
+  const [editRequestMessage, setEditRequestMessage] = useState("");
+  const [editRequestFormData, setEditRequestFormData] = useState({
+    company_name: "",
+    owner_name: "",
+    phone: "",
+    email: "",
+    products: "",
+    services: ""
+  });
+  const [submittingRequest, setSubmittingRequest] = useState(false);
+  const [approvedEditRequests, setApprovedEditRequests] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     fetchFacebookData();
-  }, [userId]);
+    if (userRole !== "admin") {
+      fetchApprovedEditRequests();
+    }
+  }, [userId, userRole]);
+
+  const fetchApprovedEditRequests = async () => {
+    try {
+      const { data, error } = await (supabase
+        .from("facebook_data_edit_requests" as any)
+        .select("facebook_data_id")
+        .eq("requested_by_id", userId)
+        .eq("status", "approved") as any);
+
+      if (error) {
+        console.error("Error fetching approved edit requests:", error);
+        return;
+      }
+
+      const approvedIds = new Set<number>((data || []).map((r: any) => Number(r.facebook_data_id)));
+      setApprovedEditRequests(approvedIds);
+    } catch (error) {
+      console.error("Error in fetchApprovedEditRequests:", error);
+    }
+  };
 
   const fetchFacebookData = async () => {
     setLoading(true);
+    setError(null);
     
-    let query = supabase
-      .from("companies")
+    try {
+      console.log("🔍 Starting to fetch Facebook data...");
+      console.log("👤 Current user:", userId, "Role:", userRole);
+      
+      // Check authentication first
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      console.log("🔐 Auth check:", { user: user?.id, email: user?.email, authError });
+      
+      if (authError || !user) {
+        throw new Error("Not authenticated. Please log in again.");
+      }
+      
+      let data: any;
+      let queryError: any;
+      let shareDateMapLocal: Record<number, string> = {}; // Local variable to store share dates
+      
+      if (userRole === "admin") {
+        // Admin can see ALL Facebook data (both shared and unshared)
+        console.log("👑 Fetching as admin (all Facebook data)...");
+        
+        // First, get all Facebook data (without comments first to avoid errors)
+        const allDataResult = await (supabase
+          .from("facebook_data" as any)
+          .select("*")
+          .order("created_at", { ascending: false }) as any);
+        
+        if (allDataResult.error) {
+          data = [];
+          queryError = allDataResult.error;
+        } else {
+          // Fetch share dates for admin to show when data was shared
+          let adminShareDateMap: Record<number, string> = {};
+          if (allDataResult.data && allDataResult.data.length > 0) {
+            try {
+              const dataIds = allDataResult.data.map((item: any) => item.id);
+              
+              // Fetch all shares for these Facebook data items
+              const sharesResult = await (supabase
+                .from("facebook_data_shares" as any)
+                .select("facebook_data_id, created_at")
+                .in("facebook_data_id", dataIds) as any);
+              
+              if (!sharesResult.error && sharesResult.data) {
+                // Create a map of facebook_data_id to the earliest share date (first time it was shared)
+                sharesResult.data.forEach((share: any) => {
+                  if (share.created_at) {
+                    const existingDate = adminShareDateMap[share.facebook_data_id];
+                    if (!existingDate || new Date(share.created_at) < new Date(existingDate)) {
+                      // Use the earliest share date (first time it was shared)
+                      adminShareDateMap[share.facebook_data_id] = share.created_at;
+                    }
+                  }
+                });
+              }
+            } catch (sharesError) {
+              console.warn("Could not fetch share dates (table may not exist yet):", sharesError);
+              // Continue without share dates
+            }
+          }
+          
+          // Store admin share date map for use in mapping
+          shareDateMapLocal = adminShareDateMap;
+          
+          // Try to fetch comments separately for each item (gracefully handle if table doesn't exist)
+          if (allDataResult.data && allDataResult.data.length > 0) {
+            try {
+              const dataIds = allDataResult.data.map((item: any) => item.id);
+              const commentsResult = await (supabase
+                .from("facebook_data_comments" as any)
       .select(`
-        *,
-        assigned_to:profiles!assigned_to_id(display_name),
-        comments (
           id,
+                  facebook_data_id,
           comment_text,
           category,
           comment_date,
           created_at,
           user_id,
-          user:profiles!user_id (
-            display_name,
-            email
-          )
-        )
-      `)
-      .ilike("source", "%facebook%")
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false });
+                  user:profiles!user_id(display_name, email)
+                `)
+                .in("facebook_data_id", dataIds) as any);
+              
+              // If comments fetch succeeded, attach them to data
+              if (!commentsResult.error && commentsResult.data) {
+                const commentsMap = new Map();
+                commentsResult.data.forEach((comment: any) => {
+                  if (!commentsMap.has(comment.facebook_data_id)) {
+                    commentsMap.set(comment.facebook_data_id, []);
+                  }
+                  commentsMap.get(comment.facebook_data_id).push(comment);
+                });
+                
+                // Attach comments to each data item
+                allDataResult.data = allDataResult.data.map((item: any) => ({
+                  ...item,
+                  comments: (commentsMap.get(item.id) || []).sort((a: any, b: any) => 
+                    new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                  )
+                }));
+              }
+              // If comments table doesn't exist, just continue without comments (no error)
+            } catch (commentsError) {
+              console.warn("Could not fetch comments (table may not exist yet):", commentsError);
+              // Continue without comments
+            }
+          }
+          
+          // Show all data (both shared and unshared) for admin
+          data = allDataResult.data || [];
+          queryError = null;
+          
+          console.log("📋 Admin query result:", { 
+            totalData: data.length,
+            error: queryError,
+            shareDatesCount: Object.keys(adminShareDateMap).length
+          });
+        }
+      } else {
+        // Employees can only see shared Facebook data
+        console.log("👤 Fetching as employee...");
+        console.log("🔍 Looking for shares for employee ID:", userId);
+        
+        // First, get the share IDs for this employee
+        const sharesResult = await (supabase
+          .from("facebook_data_shares" as any)
+          .select("facebook_data_id, id, created_at")
+          .eq("employee_id", userId) as any);
+        
+        console.log("📦 Shares query result:", {
+          shares: sharesResult.data,
+          sharesCount: sharesResult.data?.length,
+          error: sharesResult.error
+        });
+        
+        if (sharesResult.error) {
+          // Check if table doesn't exist
+          if (sharesResult.error.code === "PGRST205" || sharesResult.error.message?.includes("could not find")) {
+            // Table doesn't exist yet - show helpful message
+            console.error("❌ facebook_data_shares table not found");
+            data = [];
+            queryError = {
+              ...sharesResult.error,
+              message: "facebook_data_shares table not found. Please run the migration to create it.",
+              isTableMissing: true
+            };
+          } else {
+            console.error("❌ Error fetching shares:", sharesResult.error);
+            data = [];
+            queryError = sharesResult.error;
+          }
+        } else if (!sharesResult.data || sharesResult.data.length === 0) {
+          // No shares found - this is normal, employee just has no shared data yet
+          console.log("ℹ️ No shares found for this employee - they haven't received any shared data yet");
+          data = [];
+          queryError = null;
+          setShareIdMap({});
+        } else {
+          // Build share ID map for edit requests and share date map
+          const shareMap: Record<number, string> = {};
+          shareDateMapLocal = {}; // Reset and populate with share dates
+          sharesResult.data.forEach((share: any) => {
+            shareMap[share.facebook_data_id] = share.id;
+            // Store the share date (when admin shared it) instead of original created_at
+            if (share.created_at) {
+              shareDateMapLocal[share.facebook_data_id] = share.created_at;
+            }
+          });
+          setShareIdMap(shareMap);
+          setShareDateMap(shareDateMapLocal);
+          
+          // Get the actual Facebook data for the shared IDs
+          const facebookDataIds = sharesResult.data.map((share: any) => share.facebook_data_id);
+          console.log("🔍 Fetching Facebook data for IDs:", facebookDataIds);
+          
+          const facebookDataResult = await (supabase
+            .from("facebook_data" as any)
+            .select("*")
+            .in("id", facebookDataIds)
+            .order("created_at", { ascending: false }) as any);
+          
+          console.log("📋 Facebook data query result:", {
+            dataLength: facebookDataResult.data?.length,
+            error: facebookDataResult.error,
+            data: facebookDataResult.data
+          });
+          
+          if (facebookDataResult.error) {
+            data = [];
+            queryError = facebookDataResult.error;
+          } else {
+            data = facebookDataResult.data || [];
 
-    // For employees, only show assigned data; for admin, show all Facebook data
-    if (userRole !== "admin") {
-      query = query.eq("assigned_to_id", userId);
+            // Try to fetch comments separately (gracefully handle if table doesn't exist)
+            if (data.length > 0) {
+              try {
+                const commentsResult = await (supabase
+                  .from("facebook_data_comments" as any)
+                  .select(`
+                    id,
+                    facebook_data_id,
+                    comment_text,
+                    category,
+                    comment_date,
+                    created_at,
+                    user_id,
+                    user:profiles!user_id(display_name, email)
+                  `)
+                  .in("facebook_data_id", facebookDataIds) as any);
+                
+                // If comments fetch succeeded, attach them to data
+                if (!commentsResult.error && commentsResult.data) {
+                  const commentsMap = new Map();
+                  commentsResult.data.forEach((comment: any) => {
+                    if (!commentsMap.has(comment.facebook_data_id)) {
+                      commentsMap.set(comment.facebook_data_id, []);
+                    }
+                    commentsMap.get(comment.facebook_data_id).push(comment);
+                  });
+                  
+                  // Attach comments to each data item
+                  data = data.map((item: any) => ({
+                    ...item,
+                    comments: (commentsMap.get(item.id) || []).sort((a: any, b: any) => 
+                      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                    )
+                  }));
+                }
+                // If comments table doesn't exist, just continue without comments (no error)
+              } catch (commentsError) {
+                console.warn("Could not fetch comments (table may not exist yet):", commentsError);
+                // Continue without comments - add empty array
+                data = data.map((item: any) => ({
+                  ...item,
+                  comments: []
+                }));
+              }
+            }
+            
+            queryError = null;
+          }
+        }
+      }
+
+      console.log("📊 Query result:", { 
+        hasData: !!data, 
+        dataLength: data?.length, 
+        error: queryError,
+        sampleData: data?.[0],
+        dataType: typeof data,
+        isArray: Array.isArray(data),
+        fullData: data
+      });
+
+      if (queryError) {
+        console.error("❌ Error fetching Facebook data:", queryError);
+        console.error("📋 Full error object:", JSON.stringify(queryError, null, 2));
+        const errorMsg = queryError.message || "Failed to fetch Facebook data";
+        const errorCode = queryError.code || queryError.error_code || "";
+        const errorDetails = queryError.details || queryError.hint || "";
+        
+        setError(errorMsg);
+        setFacebookData([]);
+        
+        // Show specific error messages
+        if (queryError.isTableMissing || errorCode === "PGRST205") {
+          toast.error("facebook_data_shares table not found. Please run the migration.", {
+            duration: 10000
+          });
+        } else if (errorCode === "42501" || errorMsg?.includes("permission denied")) {
+          toast.error("Permission denied. Check RLS policies for facebook_data table.");
+          console.error("🔒 RLS Error - Need to add policies. Error details:", queryError);
+        } else if (errorCode === "PGRST116" || errorMsg?.includes("does not exist")) {
+          toast.error("The facebook_data table does not exist.");
+        } else if (errorCode === "42703" || errorMsg?.includes("column") || errorMsg?.includes("does not exist")) {
+          toast.error("Table structure mismatch. Please check database schema.", {
+            duration: 10000
+          });
+          console.error("🔍 Schema Error - Table or column may be missing:", {
+            code: errorCode,
+            message: errorMsg,
+            details: errorDetails
+          });
+        } else if (errorCode === "400" || errorCode === "PGRST301" || errorMsg?.includes("400")) {
+          toast.error("Bad request. Check if facebook_data_comments table exists. Comments may not be available yet.", {
+            duration: 8000
+          });
+          console.error("🔍 400 Error - Possible causes:", {
+            code: errorCode,
+            message: errorMsg,
+            details: errorDetails,
+            hint: "The comments table may not exist yet. This is not critical - data will load without comments."
+          });
+        } else {
+          toast.error(`Error: ${errorMsg}${errorDetails ? ` (${errorDetails})` : ''}`);
+        }
+      } else if (data) {
+        // Handle different data formats - check if it's an array
+        const dataArray = Array.isArray(data) ? data : (data ? [data] : []);
+        
+        console.log(`✅ Successfully fetched ${dataArray.length} Facebook data entries`);
+        console.log("🔍 Raw data array:", dataArray);
+        
+        if (dataArray.length === 0 && !queryError) {
+          // Query succeeded but returned empty array - RLS is likely blocking rows
+          console.warn("⚠️ Query returned empty array - RLS policies are filtering out all rows");
+          console.warn("💡 The table has data but RLS is blocking access");
+          console.warn("🔍 Debug info:", {
+            userRole,
+            userId,
+            authenticated: !!user,
+            queryRan: true
+          });
+          
+          setFacebookData([]);
+          setError("No data returned. RLS policies may be blocking access. See console for details.");
+          
+          // Show helpful error message with specific fix
+          toast.error("RLS policies blocking data access. The policy might not be active. Check SQL Editor.", {
+            duration: 10000
+          });
+        } else {
+          // Map the data to our interface
+          let typedData: FacebookData[];
+          
+          if (userRole === "admin") {
+            // For admin, data comes directly from facebook_data table
+            // Keep both original upload date and share date
+            typedData = dataArray.map((item: any) => ({
+              id: item.id,
+              name: item.name || null,
+              email: item.email || null,
+              phone: item.phone || null,
+              company_name: item.company_name || null,
+              owner_name: item.owner_name || null,
+              products: item.products || null,
+              services: item.services || null,
+              // Keep original upload date
+              created_at: item.created_at || new Date().toISOString(),
+              // Add share date if available (when data was first shared)
+              shared_at: shareDateMapLocal[item.id] || null,
+              assigned_to: item.assigned_to || null,
+              comments: (item.comments || []).sort((a: any, b: any) => 
+                new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+              ),
+            }));
+          } else {
+            // For employees, data comes directly from facebook_data table (already filtered by shared IDs)
+            // We also hide entries whose latest comment category is "block" (Inactive),
+            // so that deleted items disappear from the main Facebook Data section but
+            // still appear in the Inactive category views.
+            const employeeVisibleData = dataArray.filter((item: any) => {
+              const sortedComments = (item.comments || []).slice().sort(
+                (a: any, b: any) =>
+                  new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+              );
+              const latest = sortedComments[0];
+              return !(latest && latest.category === "block");
+            });
+
+            typedData = employeeVisibleData.map((item: any) => ({
+              id: item.id,
+              name: item.name || null,
+              email: item.email || null,
+              phone: item.phone || null,
+              company_name: item.company_name || null,
+              owner_name: item.owner_name || null,
+              products: item.products || null,
+              services: item.services || null,
+              // Use share date if available (when admin shared it), otherwise fall back to original created_at
+              created_at: shareDateMapLocal[item.id] || item.created_at || new Date().toISOString(),
+              assigned_to: null, // Not applicable for shared data
+              comments: (item.comments || []).sort((a: any, b: any) => 
+                new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+              ),
+            }));
+          }
+          
+          // For employees, once a Facebook data item has any comment (and thus a category),
+          // it should move to the corresponding category view and be hidden from the main
+          // Facebook Data section on the employee dashboard.
+          let finalData = typedData;
+          if (userRole !== "admin") {
+            finalData = typedData.filter((item) => !item.comments || item.comments.length === 0);
+          }
+
+          console.log("📝 Mapped data:", typedData);
+          console.log(`✅ Setting ${finalData.length} Facebook data entries for ${userRole}`);
+          
+          setFacebookData(finalData);
+          setError(null);
+        }
+      } else {
+        console.warn("⚠️ No data returned from query");
+        setFacebookData([]);
+      }
+    } catch (err: any) {
+      console.error("💥 Exception in fetchFacebookData:", err);
+      const errorMessage = err.message || "Failed to fetch Facebook data";
+      setError(errorMessage);
+      setFacebookData([]);
+      toast.error(errorMessage);
+    } finally {
+      setLoading(false);
+      console.log("🏁 Fetch completed");
     }
-
-    const { data, error } = await query;
-
-    if (!error && data) {
-      const companiesWithSortedComments = data.map((company) => ({
-        ...company,
-        comments:
-          company.comments?.sort(
-            (a: any, b: any) =>
-              new Date(b.created_at).getTime() -
-              new Date(a.created_at).getTime()
-          ) || [],
-      }));
-
-      setCompanies(companiesWithSortedComments);
-    }
-
-    setLoading(false);
   };
+
+  const handleDelete = async (data: FacebookData) => {
+    if (!confirm("Are you sure you want to delete this Facebook data entry?")) {
+      return;
+    }
+
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+
+      // For employees, "delete" should move the Facebook data to Inactive (block) category
+      // by adding a block comment, not actually delete the record.
+      if (userRole !== "admin") {
+        const commentCategory = "block" as "block";
+
+        const { error: commentError } = await (supabase
+          .from("facebook_data_comments" as any)
+          .insert([{
+            facebook_data_id: data.id,
+            user_id: userData.user?.id,
+            comment_text: "Moved to Inactive by employee",
+            category: commentCategory,
+            comment_date: new Date().toISOString().slice(0, 10),
+          }]) as any);
+
+        if (commentError) {
+          console.error("Error moving Facebook data to inactive via comment:", commentError);
+          throw commentError;
+        }
+
+        toast.success("Facebook data moved to Inactive section");
+        fetchFacebookData();
+        return;
+      }
+
+      // Admins: hard delete from facebook_data
+      const { error } = await (supabase
+        .from("facebook_data" as any)
+        .delete()
+        .eq("id", data.id) as any);
+
+      if (error) throw error;
+
+      toast.success("Facebook data deleted successfully");
+      fetchFacebookData();
+    } catch (error: any) {
+      console.error("Error deleting Facebook data:", error);
+      toast.error(error.message || "Failed to delete Facebook data");
+    }
+  };
+
+  // Admin edit functionality
+  const handleEditClick = (data: FacebookData) => {
+    setEditingData(data);
+    setEditFormData({
+      name: data.name || "",
+      email: data.email || "",
+      phone: data.phone || "",
+    });
+    setEditDialogOpen(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingData) return;
+
+    // Validation: Check required fields
+    if (!editFormData.name.trim()) {
+      toast.error("Name is required");
+      return;
+    }
+    if (!editFormData.email?.trim()) {
+      toast.error("Email is required");
+      return;
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(editFormData.email)) {
+      toast.error("Please enter a valid email address");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const { error } = await (supabase
+        .from("facebook_data" as any)
+        .update({
+          name: editFormData.name.trim(),
+          email: editFormData.email.trim(),
+          phone: editFormData.phone.trim() || null,
+        })
+        .eq("id", editingData.id) as any);
+
+      if (error) throw error;
+
+      toast.success("Facebook data updated successfully");
+      setEditDialogOpen(false);
+      setEditingData(null);
+      fetchFacebookData();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to update Facebook data");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Employee edit request functionality
+  const handleRequestEditClick = (data: FacebookData) => {
+    setRequestingEditData(data);
+    setEditRequestMessage("");
+    // Pre-fill form with existing data if available
+    setEditRequestFormData({
+      company_name: data.company_name || "",
+      owner_name: data.owner_name || "",
+      phone: data.phone || "",
+      email: data.email || "",
+      products: data.products || "",
+      services: data.services || ""
+    });
+    setEditRequestDialogOpen(true);
+  };
+
+  const handleSubmitEditRequest = async () => {
+    if (!requestingEditData) return;
+
+    // Validate required fields (services is optional)
+    if (!editRequestFormData.company_name.trim() || 
+        !editRequestFormData.owner_name.trim() || 
+        !editRequestFormData.phone.trim() || 
+        !editRequestFormData.email.trim() || 
+        !editRequestFormData.products.trim()) {
+      toast.error("Please fill in all required fields (Company Name, Owner Name, Phone, Email, Products)");
+      return;
+    }
+
+    setSubmittingRequest(true);
+    try {
+      const shareId = shareIdMap[requestingEditData.id];
+      console.log("🔍 Edit request submission:", {
+        facebookDataId: requestingEditData.id,
+        shareId: shareId,
+        shareIdMap: shareIdMap,
+        userId: userId
+      });
+      
+      if (!shareId) {
+        toast.error("Share ID not found. Please refresh the page and try again.");
+        console.error("❌ Share ID not found in shareIdMap for Facebook data ID:", requestingEditData.id);
+        setSubmittingRequest(false);
+        return;
+      }
+
+      const { error } = await (supabase
+        .from("facebook_data_edit_requests" as any)
+        .insert([{
+          facebook_data_id: requestingEditData.id,
+          facebook_data_share_id: shareId,
+          requested_by_id: userId,
+          request_message: editRequestMessage.trim() || "Edit request with submitted data",
+          status: "pending",
+          company_name: editRequestFormData.company_name.trim(),
+          owner_name: editRequestFormData.owner_name.trim(),
+          phone: editRequestFormData.phone.trim(),
+          email: editRequestFormData.email.trim(),
+          products: editRequestFormData.products.trim(),
+          services: editRequestFormData.services.trim() || null,
+        }]) as any);
+
+      if (error) {
+        console.error("❌ Error submitting edit request:", error);
+        console.error("📋 Full error object:", JSON.stringify(error, null, 2));
+        
+        const errorMessage = (error.message || "").toLowerCase();
+        const errorCode = error.code || "";
+        const errorStatus = (error as any).status || (error as any).statusCode;
+        const errorDetails = error.details || error.hint || "";
+        
+        console.log("🔍 Error analysis:", {
+          code: errorCode,
+          status: errorStatus,
+          message: errorMessage,
+          details: errorDetails,
+          fullError: error
+        });
+        
+        // Check for foreign key constraint violation FIRST (most common)
+        if (
+          errorCode === "23503" ||
+          errorMessage.includes("foreign key") ||
+          errorMessage.includes("violates foreign key constraint") ||
+          errorMessage.includes("key constraint")
+        ) {
+          toast.error(
+            `Foreign key error: The share ID may not exist. Error: ${error.message || errorCode}. Please refresh the page and try again.`,
+            { duration: 12000 }
+          );
+          console.error("🔗 Foreign key constraint violation:", error);
+          return;
+        }
+        
+        // Check for RLS policy violation
+        if (
+          errorCode === "42501" ||
+          errorMessage.includes("permission denied") ||
+          errorMessage.includes("row-level security") ||
+          errorMessage.includes("policy")
+        ) {
+          toast.error(
+            `Permission denied: ${error.message || "RLS policy is blocking this operation"}. Please check RLS policies.`,
+            { duration: 12000 }
+          );
+          console.error("🔒 RLS policy violation:", error);
+          return;
+        }
+        
+        // Check for validation/constraint errors
+        if (
+          errorCode === "23514" ||
+          errorCode === "23502" ||
+          errorMessage.includes("violates check constraint") ||
+          errorMessage.includes("null value") ||
+          errorMessage.includes("not null")
+        ) {
+          toast.error(
+            `Validation error: ${error.message || errorDetails || "Please check all required fields are filled correctly."}`,
+            { duration: 10000 }
+          );
+          console.error("✅ Validation error:", error);
+          return;
+        }
+        
+        // Check if table doesn't exist (ONLY if it's actually a table not found error)
+        if (
+          (errorCode === "PGRST205" && errorMessage.includes("table")) ||
+          (errorCode === "42P01" && errorMessage.includes("relation")) ||
+          (errorStatus === 404 && errorMessage.includes("not found") && errorMessage.includes("table")) ||
+          (errorMessage.includes("relation") && errorMessage.includes("does not exist") && errorMessage.includes("facebook_data_edit_requests"))
+        ) {
+          toast.error(
+            "The edit requests table is not found. Please run the SQL script: create_facebook_data_edit_requests_table.sql in Supabase SQL Editor.",
+            { duration: 12000 }
+          );
+          console.error("📋 Table missing. Run: create_facebook_data_edit_requests_table.sql");
+          return;
+        }
+        
+        // Generic error with all details
+        const displayMessage = error.message || errorCode || "Unknown error";
+        toast.error(
+          `Failed to submit edit request: ${displayMessage}${errorDetails ? ` (Details: ${errorDetails})` : ''}`,
+          { duration: 15000 }
+        );
+        console.error("❌ Error details:", { 
+          code: errorCode, 
+          status: errorStatus,
+          message: error.message, 
+          details: errorDetails,
+          fullError: error
+        });
+        return;
+      }
+
+      toast.success("Edit request sent successfully. Waiting for admin approval.");
+      setEditRequestDialogOpen(false);
+      setRequestingEditData(null);
+      setEditRequestMessage("");
+      setEditRequestFormData({
+        company_name: "",
+        owner_name: "",
+        phone: "",
+        email: "",
+        products: "",
+        services: ""
+      });
+      fetchApprovedEditRequests(); // Refresh approved requests
+    } catch (error: any) {
+      console.error("Error submitting edit request:", error);
+      if (error.message && !error.message.includes("migration")) {
+        toast.error(error.message || "Failed to submit edit request");
+      }
+    } finally {
+      setSubmittingRequest(false);
+    }
+  };
+
+  // No separate employee edit step after approval:
+  // when admin approves an edit request, the approved data is applied
+  // directly to the facebook_data row in EditRequestsView.
 
   if (loading) {
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-3">
           <Share2 className="h-8 w-8 text-primary" />
-          <h2 className="text-3xl font-bold">Facebook Data</h2>
+          <h2 className="text-3xl font-bold text-white">Facebook Data</h2>
         </div>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {[...Array(6)].map((_, i) => (
-            <CompanyCardSkeleton key={i} />
+            <FacebookDataCardSkeleton key={i} />
           ))}
         </div>
       </div>
@@ -118,20 +856,199 @@ const FacebookDataView = ({ userId, userRole }: FacebookDataViewProps) => {
           </div>
           <div>
             <h2 className="text-3xl font-bold tracking-tight text-white">Facebook Data</h2>
-            <p className="text-sm text-muted-foreground mt-1 text-white">
+            <p className="text-sm text-white/80 mt-1">
               {userRole === "admin" 
-                ? "All companies from Facebook source" 
-                : "Companies from Facebook source assigned to you"}
+                ? "All Facebook data from database" 
+                : "Facebook data"}
             </p>
           </div>
         </div>
-        {companies.length > 0 && (
+        <div className="flex items-center gap-3">
+          {facebookData.length > 0 && (
           <div className="px-4 py-2 bg-blue-100 rounded-full">
-            <span className="text-sm font-semibold text-blue-600">{companies.length} {companies.length === 1 ? 'company' : 'companies'}</span>
+              <span className="text-sm font-semibold text-blue-600">
+                {facebookData.length} {facebookData.length === 1 ? 'entry' : 'entries'}
+              </span>
+            </div>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchFacebookData}
+            disabled={loading}
+            className="flex items-center gap-2"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
+      </div>
+      
+      {error && (
+        <Card className="border-destructive bg-destructive/10">
+          <CardContent className="flex flex-col gap-3 pt-6">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="h-5 w-5 text-destructive" />
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-destructive">Error Loading Data</p>
+                <p className="text-sm text-muted-foreground mt-1">{error}</p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchFacebookData}
+                disabled={loading}
+              >
+                <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                Retry
+              </Button>
+            </div>
+            {(error.includes("facebook_data_shares") || error.includes("PGRST205")) && (
+              <div className="mt-2 p-4 bg-muted rounded-lg space-y-3 border-2 border-orange-500/50">
+                <div>
+                  <p className="text-sm font-semibold mb-1 text-orange-700 dark:text-orange-400">📋 Missing Table: facebook_data_shares</p>
+                  <p className="text-xs text-muted-foreground">
+                    The facebook_data_shares table is required for sharing Facebook data with employees. Please run the migration to create it.
+                  </p>
+                </div>
+                
+                <div className="space-y-2 text-xs">
+                  <div className="p-2 bg-background rounded border">
+                    <p className="font-semibold mb-1">📋 Copy & Paste This SQL:</p>
+                    <p className="text-[10px] text-muted-foreground mb-1">Go to: Supabase Dashboard → SQL Editor → Paste and Run:</p>
+                    <code 
+                      className="block bg-slate-900 text-green-400 px-3 py-2 rounded text-[11px] font-mono whitespace-pre-wrap break-all cursor-pointer hover:bg-slate-800 transition-colors"
+                      onClick={(e) => {
+                        navigator.clipboard.writeText(`-- Create facebook_data_shares table
+CREATE TABLE IF NOT EXISTS public.facebook_data_shares (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  facebook_data_id BIGINT NOT NULL,
+  employee_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+  shared_by_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  request_id UUID REFERENCES public.data_requests(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(facebook_data_id, employee_id)
+);
+
+ALTER TABLE public.facebook_data_shares ENABLE ROW LEVEL SECURITY;
+
+CREATE INDEX idx_facebook_data_shares_employee_id ON public.facebook_data_shares(employee_id);
+CREATE INDEX idx_facebook_data_shares_facebook_data_id ON public.facebook_data_shares(facebook_data_id);
+CREATE INDEX idx_facebook_data_shares_request_id ON public.facebook_data_shares(request_id);
+
+CREATE POLICY "Employees can view their own shared facebook data"
+  ON public.facebook_data_shares FOR SELECT
+  TO authenticated
+  USING (
+    employee_id = auth.uid() OR
+    EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = auth.uid() AND role = 'admin')
+  );
+
+CREATE POLICY "Admins can share facebook data"
+  ON public.facebook_data_shares FOR INSERT
+  TO authenticated
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = auth.uid() AND role = 'admin') AND
+    shared_by_id = auth.uid()
+  );
+
+CREATE POLICY "Admins can delete facebook data shares"
+  ON public.facebook_data_shares FOR DELETE
+  TO authenticated
+  USING (
+    EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = auth.uid() AND role = 'admin')
+  );`);
+                        toast.success("SQL copied to clipboard! Paste it in Supabase SQL Editor.");
+                      }}
+                      title="Click to copy"
+                    >
+{`-- Create facebook_data_shares table
+CREATE TABLE IF NOT EXISTS public.facebook_data_shares (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  facebook_data_id BIGINT NOT NULL,
+  employee_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+  shared_by_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  request_id UUID REFERENCES public.data_requests(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(facebook_data_id, employee_id)
+);
+
+-- Enable RLS and create policies (see migration file for full SQL)`}
+                    </code>
+                    <p className="text-[10px] text-muted-foreground mt-1 italic">
+                      Click the code above to copy, then paste in Supabase SQL Editor
+                    </p>
+                  </div>
+                </div>
           </div>
         )}
+            {(error.includes("RLS") || error.includes("permission") || error.includes("42501") || error.includes("No data returned")) && !error.includes("facebook_data_shares") && (
+              <div className="mt-2 p-4 bg-muted rounded-lg space-y-3 border-2 border-yellow-500/50">
+                <div>
+                  <p className="text-sm font-semibold mb-1 text-yellow-700 dark:text-yellow-400">🔒 RLS Policy Issue Detected</p>
+                  <p className="text-xs text-muted-foreground">
+                    The facebook_data table has Row Level Security (RLS) enabled but policies are blocking access to your data.
+                  </p>
+                </div>
+                
+                <div className="space-y-2 text-xs">
+                  <div className="p-2 bg-background rounded border">
+                    <p className="font-semibold mb-1">📋 Copy & Paste This SQL (Easiest Fix):</p>
+                    <p className="text-[10px] text-muted-foreground mb-1">Go to: Supabase Dashboard → SQL Editor → Paste and Run:</p>
+                    <code 
+                      className="block bg-slate-900 text-green-400 px-3 py-2 rounded text-[11px] font-mono whitespace-pre-wrap break-all cursor-pointer hover:bg-slate-800 transition-colors"
+                      onClick={(e) => {
+                        navigator.clipboard.writeText(`-- Fix Facebook Data RLS Access
+ALTER TABLE public.facebook_data ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow authenticated users to view facebook data" ON public.facebook_data;
+
+CREATE POLICY "Allow authenticated users to view facebook data"
+  ON public.facebook_data 
+  FOR SELECT
+  TO authenticated
+  USING (true);`);
+                        toast.success("SQL copied to clipboard! Paste it in Supabase SQL Editor.");
+                      }}
+                      title="Click to copy"
+                    >
+{`-- Fix Facebook Data RLS Access
+ALTER TABLE public.facebook_data ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow authenticated users to view facebook data" ON public.facebook_data;
+
+CREATE POLICY "Allow authenticated users to view facebook data"
+  ON public.facebook_data 
+  FOR SELECT
+  TO authenticated
+  USING (true);`}
+                    </code>
+                    <p className="text-[10px] text-muted-foreground mt-1 italic">
+                      Click the code above to copy, then paste in Supabase SQL Editor
+                    </p>
+                  </div>
+                  
+                  <div className="pt-2 border-t">
+                    <p className="font-semibold mb-1">📁 Alternative: Run Migration File</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      Or use the migration file: <code className="bg-background px-1 rounded">fix_facebook_data_rls.sql</code>
+                    </p>
+                  </div>
+                </div>
+                
+                <div className="flex items-start gap-2 p-2 bg-blue-50 dark:bg-blue-950 rounded">
+                  <span className="text-blue-500">💡</span>
+                  <p className="text-[10px] text-blue-700 dark:text-blue-300">
+                    After running the SQL, refresh this page (or click Retry) and your 11+ Facebook data entries should appear.
+                  </p>
+                </div>
       </div>
-      {companies.length === 0 ? (
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {!error && facebookData.length === 0 && !loading ? (
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-16">
             <div className="p-4 bg-muted rounded-full mb-4">
@@ -140,28 +1057,364 @@ const FacebookDataView = ({ userId, userRole }: FacebookDataViewProps) => {
             <h3 className="text-lg font-semibold mb-2">No Facebook data</h3>
             <p className="text-sm text-muted-foreground text-center max-w-sm">
               {userRole === "admin"
-                ? "There are no companies from Facebook source in the system at the moment."
-                : "You don't have any companies from Facebook source assigned to you at the moment."}
+                ? "There is no Facebook data in the database at the moment."
+                : "You don't have any shared Facebook data yet. Request Facebook data from the 'Request Data' section, and once approved by admin, the shared data will appear here."}
             </p>
           </CardContent>
         </Card>
-      ) : (
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {companies.map((company) => (
-            <CompanyCard
-              key={company.id}
-              company={company}
-              onUpdate={fetchFacebookData}
-              canDelete={userRole === "admin"}
-              showAssignedTo={userRole === "admin"}
-              userRole={userRole}
-            />
+      ) : !error && facebookData.length > 0 ? (
+        <div className="space-y-4">
+          {/* Card Grid View */}
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 mb-6">
+            {facebookData.map((data) => (
+              <FacebookDataCard
+                key={data.id}
+                data={data}
+                onUpdate={fetchFacebookData}
+                userRole={userRole}
+                // Admin can edit directly; employees only request edits (no second form after approval)
+                onEdit={userRole === "admin" ? () => handleEditClick(data) : undefined}
+                onDelete={() => handleDelete(data)}
+                onRequestEdit={userRole !== "admin" && !approvedEditRequests.has(data.id) ? () => handleRequestEditClick(data) : undefined}
+                approvedForEdit={approvedEditRequests.has(data.id)}
+              />
           ))}
+          </div>
+
+          {/* Table View for Admin */}
+          {userRole === "admin" && (
+            <Card>
+              <CardHeader>
+                <CardTitle>All Facebook Data (Table View)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>ID</TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Created At</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {facebookData.map((data) => (
+                        <TableRow key={data.id}>
+                          <TableCell className="font-mono font-semibold">{data.id}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <User className="h-4 w-4 text-muted-foreground" />
+                              {data.name || "N/A"}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            {data.email ? (
+                              <a 
+                                href={`mailto:${data.email}`} 
+                                className="text-primary hover:underline flex items-center gap-1"
+                              >
+                                <Mail className="h-3 w-3" />
+                                {data.email}
+                              </a>
+                            ) : (
+                              <span className="text-muted-foreground">N/A</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1 text-muted-foreground">
+                                <Calendar className="h-3 w-3" />
+                                <span className="text-xs">
+                                  <span className="font-semibold">Uploaded:</span>{" "}
+                                  {data.created_at 
+                                    ? new Date(data.created_at).toLocaleString('en-US', {
+                                        year: 'numeric',
+                                        month: 'short',
+                                        day: 'numeric',
+                                        hour: '2-digit',
+                                        minute: '2-digit'
+                                      })
+                                    : "N/A"}
+                                </span>
+                              </div>
+                              {userRole === "admin" && data.shared_at && (
+                                <div className="flex items-center gap-1 text-primary">
+                                  <Share2 className="h-3 w-3" />
+                                  <span className="text-xs">
+                                    <span className="font-semibold">Shared:</span>{" "}
+                                    {new Date(data.shared_at).toLocaleString('en-US', {
+                                      year: 'numeric',
+                                      month: 'short',
+                                      day: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEditClick(data)}
+                                className="text-primary hover:text-primary"
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDelete(data)}
+                                className="text-destructive hover:text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
-      )}
+      ) : null}
+
+      {/* Admin Edit Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="text-white">Edit Facebook Data</DialogTitle>
+            <DialogDescription className="text-white/80">
+              Update the Facebook data information. All fields are required.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-name" className="text-white">
+                Name <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="edit-name"
+                placeholder="Enter name"
+                value={editFormData.name}
+                onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                required
+                className="text-white placeholder:text-white/50"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-email" className="text-white">
+                Email <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="edit-email"
+                type="email"
+                placeholder="Enter email"
+                value={editFormData.email}
+                onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+                required
+                className="text-white placeholder:text-white/50"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-phone" className="text-white">
+                Phone
+              </Label>
+              <Input
+                id="edit-phone"
+                type="tel"
+                placeholder="Enter phone number"
+                value={editFormData.phone}
+                onChange={(e) => setEditFormData({ ...editFormData, phone: e.target.value })}
+                className="text-white placeholder:text-white/50"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditDialogOpen(false);
+                setEditingData(null);
+              }}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleSaveEdit} disabled={saving}>
+              {saving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                "Save Changes"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Employee Edit Request Dialog */}
+      <Dialog open={editRequestDialogOpen} onOpenChange={setEditRequestDialogOpen}>
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-white">Submit Facebook Data</DialogTitle>
+            <DialogDescription className="text-white/80">
+              Please fill in all required fields. Services is optional.
+            </DialogDescription>
+          </DialogHeader>
+          {requestingEditData && (
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-request-company-name" className="text-white">
+                  Company Name <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="edit-request-company-name"
+                  placeholder="Enter company name"
+                  value={editRequestFormData.company_name}
+                  onChange={(e) => setEditRequestFormData({ ...editRequestFormData, company_name: e.target.value })}
+                  required
+                  className="text-white placeholder:text-white/50"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-request-owner-name" className="text-white">
+                  Owner Name <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="edit-request-owner-name"
+                  placeholder="Enter owner name"
+                  value={editRequestFormData.owner_name}
+                  onChange={(e) => setEditRequestFormData({ ...editRequestFormData, owner_name: e.target.value })}
+                  required
+                  className="text-white placeholder:text-white/50"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-request-phone" className="text-white">
+                  Phone Number <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="edit-request-phone"
+                  type="tel"
+                  placeholder="Enter phone number"
+                  value={editRequestFormData.phone}
+                  onChange={(e) => setEditRequestFormData({ ...editRequestFormData, phone: e.target.value })}
+                  required
+                  className="text-white placeholder:text-white/50"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-request-email" className="text-white">
+                  Email Address <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="edit-request-email"
+                  type="email"
+                  placeholder="Enter email address"
+                  value={editRequestFormData.email}
+                  onChange={(e) => setEditRequestFormData({ ...editRequestFormData, email: e.target.value })}
+                  required
+                  className="text-white placeholder:text-white/50"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-request-products" className="text-white">
+                  Products <span className="text-destructive">*</span>
+                </Label>
+                <Textarea
+                  id="edit-request-products"
+                  placeholder="Enter products"
+                  value={editRequestFormData.products}
+                  onChange={(e) => setEditRequestFormData({ ...editRequestFormData, products: e.target.value })}
+                  rows={3}
+                  required
+                  className="text-white placeholder:text-white/50"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-request-services" className="text-white">
+                  Services <span className="text-muted-foreground">(Optional)</span>
+                </Label>
+                <Textarea
+                  id="edit-request-services"
+                  placeholder="Enter services (optional)"
+                  value={editRequestFormData.services}
+                  onChange={(e) => setEditRequestFormData({ ...editRequestFormData, services: e.target.value })}
+                  rows={3}
+                  className="text-white placeholder:text-white/50"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-request-message" className="text-white">
+                  Additional Notes (Optional)
+                </Label>
+                <Textarea
+                  id="edit-request-message"
+                  placeholder="Any additional information..."
+                  value={editRequestMessage}
+                  onChange={(e) => setEditRequestMessage(e.target.value)}
+                  rows={3}
+                  className="text-white placeholder:text-white/50"
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditRequestDialogOpen(false);
+                setRequestingEditData(null);
+                setEditRequestMessage("");
+                setEditRequestFormData({
+                  company_name: "",
+                  owner_name: "",
+                  phone: "",
+                  email: "",
+                  products: "",
+                  services: ""
+                });
+              }}
+              disabled={submittingRequest}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSubmitEditRequest}
+              disabled={submittingRequest || 
+                !editRequestFormData.company_name.trim() || 
+                !editRequestFormData.owner_name.trim() || 
+                !editRequestFormData.phone.trim() || 
+                !editRequestFormData.email.trim() || 
+                !editRequestFormData.products.trim()}
+              className="bg-primary text-white hover:bg-primary hover:text-white"
+            >
+              {submittingRequest ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin text-white" />
+                  <span className="text-white">Submitting...</span>
+                </>
+              ) : (
+                <span className="text-white">Submit Request</span>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 };
 
 export default FacebookDataView;
-

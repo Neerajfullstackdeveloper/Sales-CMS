@@ -15,12 +15,14 @@ import {
   UserCog,
   Trash2,
   Share2,
+  Pencil,
 } from "lucide-react";
 import DashboardLayout from "./DashboardLayout";
 import AllCompaniesView from "./views/AllCompaniesView";
 import EmployeeManagementView from "./views/EmployeeManagementView";
 import TeamCreationView from "./views/TeamCreationView";
 import DataRequestsView from "./views/DataRequestsView";
+import EditRequestsView from "./views/EditRequestsView";
 import HolidaysView from "./views/HolidaysView";
 import AddNewDataView from "./views/AddNewDataView";
 import AdminDataAssignmentView from "./views/AdminDataAssignmentView";
@@ -49,6 +51,7 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
     { id: "employees", label: "Employee Management", icon: Users },
     { id: "teams", label: "Team Creation", icon: UserPlus },
     { id: "requests", label: "Data Requests", icon: MessageSquare },
+    { id: "edit-requests", label: "Edit Requests", icon: Pencil },
     { id: "holidays", label: "Holidays", icon: CalendarDays },
     { id: "recycle", label: "Recycle Bin", icon: Trash2 },
   ];
@@ -68,6 +71,7 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
       {currentView === "employees" && <EmployeeManagementView />}
       {currentView === "teams" && <TeamCreationView />}
       {currentView === "requests" && <DataRequestsView />}
+      {currentView === "edit-requests" && <EditRequestsView />}
       {currentView === "holidays" && <HolidaysView />}
       {currentView === "recycle" && <RecycleBinView userRole="admin" />}
     </DashboardLayout>
