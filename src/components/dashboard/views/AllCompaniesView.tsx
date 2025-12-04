@@ -36,7 +36,7 @@ const AllCompaniesView = ({ userRole }: AllCompaniesViewProps) => {
         )
       `)
       .is("deleted_at", null)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: true });
 
     if (!error && data) {
       // Sort comments by created_at descending for each company to ensure latest comment is first
@@ -65,7 +65,7 @@ const AllCompaniesView = ({ userRole }: AllCompaniesViewProps) => {
       {companies.length === 0 ? (
         <p className="text-muted-foreground">No companies in the system yet.</p>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 items-stretch">
           {companies.map((company) => (
             <CompanyCard
               key={company.id}

@@ -256,7 +256,7 @@ const FollowUpDataView = ({ userId, userRole }: FollowUpDataViewProps) => {
       `)
       .eq("assigned_to_id", userId)
       .is("deleted_at", null)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: true });
 
     if (!companiesError && userCompanies) {
       // Filter companies where the latest comment has "follow_up" category
@@ -324,7 +324,7 @@ const FollowUpDataView = ({ userId, userRole }: FollowUpDataViewProps) => {
               ...fb,
               shared_at: shareDateMap[fb.id] || null,
               comments: (comments || []).filter((c: any) => c.facebook_data_id === fb.id)
-                .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
             }));
             
             const followUpFbData = fbWithComments.filter((fb: any) => {
@@ -363,7 +363,7 @@ const FollowUpDataView = ({ userId, userRole }: FollowUpDataViewProps) => {
           const fbWithComments = fbData.map((fb: any) => ({
             ...fb,
             comments: (comments || []).filter((c: any) => c.facebook_data_id === fb.id)
-              .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+              .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
           }));
           
           const followUpFbData = fbWithComments.filter((fb: any) => {
@@ -434,7 +434,7 @@ const FollowUpDataView = ({ userId, userRole }: FollowUpDataViewProps) => {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 items-stretch">
           {companies.map((company: any) => (
             <CompanyCard
               key={company.id}

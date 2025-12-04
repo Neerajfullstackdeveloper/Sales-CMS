@@ -162,7 +162,7 @@ const FacebookDataView = ({ userId, userRole }: FacebookDataViewProps) => {
         const allDataResult = await (supabase
           .from("facebook_data" as any)
           .select("*")
-          .order("created_at", { ascending: false }) as any);
+          .order("created_at", { ascending: true }) as any);
         
         if (allDataResult.error) {
           data = [];
@@ -315,7 +315,7 @@ const FacebookDataView = ({ userId, userRole }: FacebookDataViewProps) => {
             .from("facebook_data" as any)
             .select("*")
             .in("id", facebookDataIds)
-            .order("created_at", { ascending: false }) as any);
+            .order("created_at", { ascending: true }) as any);
           
           console.log("📋 Facebook data query result:", {
             dataLength: facebookDataResult.data?.length,
@@ -1065,7 +1065,7 @@ CREATE POLICY "Allow authenticated users to view facebook data"
       ) : !error && facebookData.length > 0 ? (
         <div className="space-y-4">
           {/* Card Grid View */}
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 mb-6">
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 mb-6 items-stretch">
             {facebookData.map((data) => (
               <FacebookDataCard
                 key={data.id}

@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { Building2, Phone, Mail, MapPin, MessageSquare, Trash2, Clock, Loader2 } from "lucide-react";
+import { Building2, Phone, Mail, MapPin, MessageSquare, Trash2, Clock, Loader2, Calendar, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface CompanyCardProps {
@@ -250,8 +250,8 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
   };
 
   return (
-    <Card className="group hover:shadow-lg transition-all duration-300 hover:border-primary/20 border-2">
-      <CardHeader className="pb-4">
+    <Card className="group hover:shadow-lg transition-all duration-300 hover:border-primary/20 border-2 flex flex-col h-full">
+      <CardHeader className="pb-4 flex-shrink-0">
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
             <CardTitle className="flex items-center gap-2 text-lg font-semibold mb-2">
@@ -259,57 +259,47 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
               <span className="truncate">{company.company_name}</span>
             </CardTitle>
             {company.owner_name && (
-              <p className="text-sm text-muted-foreground font-medium">{company.owner_name}</p>
+              <p className="text-sm text-muted-foreground font-medium truncate">{company.owner_name}</p>
             )}
           </div>
-          {lastComment && userRole === "admin" && (
-            <Badge 
-              className={cn(
-                "ml-2 flex-shrink-0 font-semibold text-xs px-2.5 py-1 shadow-sm",
-                categoryColors[mapDbCategoryToDisplay(lastComment.category) as keyof typeof categoryColors]
-              )}
-            >
-              {getCategoryIcon(lastComment.category)} {getCategoryDisplayName(lastComment.category).toUpperCase()}
-            </Badge>
-          )}
         </div>
       </CardHeader>
-      <CardContent className="space-y-4 pt-0">
-        <div className="space-y-2.5 text-sm">
-          <div className="flex items-center gap-2.5 text-muted-foreground hover:text-foreground transition-colors">
+      <CardContent className="space-y-4 pt-0 flex flex-col min-h-0">
+        <div className="space-y-2.5 text-sm flex-1 min-h-0 overflow-hidden">
+          <div className="flex items-center gap-2.5 text-muted-foreground hover:text-foreground transition-colors min-h-[20px]">
             <Phone className="h-4 w-4 flex-shrink-0 text-primary/70" />
             <a href={`tel:${company.phone}`} className="hover:underline truncate">{company.phone}</a>
           </div>
           {company.email && (
-            <div className="flex items-center gap-2.5 text-muted-foreground hover:text-foreground transition-colors">
+            <div className="flex items-center gap-2.5 text-muted-foreground hover:text-foreground transition-colors min-h-[20px]">
               <Mail className="h-4 w-4 flex-shrink-0 text-primary/70" />
               <a href={`mailto:${company.email}`} className="hover:underline truncate text-sm">{company.email}</a>
             </div>
           )}
           {company.address && (
-            <div className="flex items-start gap-2.5 text-muted-foreground">
-              <MapPin className="h-4 w-4 flex-shrink-0 mt-0.5 text-primary/70" />
-              <span className="text-sm leading-relaxed">{company.address}</span>
+            <div className="flex items-center gap-2.5 text-muted-foreground min-h-[20px]">
+              <MapPin className="h-4 w-4 flex-shrink-0 text-primary/70" />
+              <span className="text-sm truncate">{company.address}</span>
             </div>
           )}
           {company.products_services && (
-            <div className="text-muted-foreground pt-1 border-t">
-              <span className="font-semibold text-foreground">Products & Services:</span>{" "}
-              <span className="text-sm">{company.products_services}</span>
+            <div className="text-muted-foreground pt-1 border-t min-h-[20px] flex items-center gap-2">
+              <span className="font-semibold text-foreground min-w-[140px] flex-shrink-0">Products & Services:</span>
+              <span className="text-sm flex-1 truncate min-w-0">{company.products_services}</span>
             </div>
           )}
           {showAssignedTo && (
-            <div className="flex items-center gap-2 text-muted-foreground pt-1 border-t">
-              <span className="font-semibold text-foreground">Assigned to:</span>
+            <div className="flex items-center gap-2 text-muted-foreground pt-1 border-t min-h-[20px]">
+              <span className="font-semibold text-foreground min-w-[90px] flex-shrink-0">Assigned to:</span>
               {company.assigned_to ? (
-                <span className="text-sm">{company.assigned_to.display_name}</span>
+                <span className="text-sm truncate flex-1 min-w-0">{company.assigned_to.display_name}</span>
               ) : (
                 <span className="text-sm text-orange-600 font-medium">Unassigned</span>
               )}
             </div>
           )}
           {userRole !== "admin" && company.assigned_at && (
-            <div className="flex items-center gap-2.5 text-muted-foreground pt-1 border-t">
+            <div className="flex items-center gap-2.5 text-muted-foreground pt-1 border-t min-h-[20px]">
               <Clock className="h-4 w-4 flex-shrink-0 text-primary/70" />
               <span className="text-sm text-foreground">
                 <span className="font-semibold">Assigned:</span>{" "}
@@ -335,7 +325,7 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
                 <Clock className="h-3 w-3 text-primary/70" />
                 <span>
                   <span className="font-semibold text-foreground">Category Updated:</span>{" "}
-                  {new Date(lastComment.comment_date || lastComment.created_at).toLocaleDateString('en-US', {
+                  {new Date(lastComment.created_at).toLocaleString('en-US', {
                     year: 'numeric',
                     month: 'short',
                     day: 'numeric',
@@ -349,7 +339,7 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
         </div>
 
         {lastComment && userRole === "admin" && (
-          <div className="border-t pt-4 bg-muted/30 rounded-lg p-3 -mx-1">
+          <div className="border-t pt-4 bg-muted/30 rounded-lg p-3 -mx-1 mt-auto">
             <div className="flex items-center gap-2 mb-2">
               <p className="text-xs font-semibold text-foreground uppercase tracking-wide">Last Comment</p>
               <Badge variant="outline" className="text-xs px-2 py-0.5">
@@ -376,32 +366,65 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
           </div>
         )}
 
-        <div className="flex gap-2 pt-2">
+        <div className="flex gap-2 pt-2 mt-auto items-center flex-nowrap">
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button
                 variant="outline"
-                className="flex-1 bg-primary text-white hover:bg-primary hover:text-primary-foreground transition-colors"
+                size="sm"
+                className="flex-1 bg-primary text-white hover:bg-primary hover:text-primary-foreground transition-colors h-9 min-w-0"
               >
-                <MessageSquare className="mr-2 h-4 w-4 text-white" />
-                <span className="text-white">Add Comment</span>
+                <MessageSquare className="mr-2 h-4 w-4 text-white flex-shrink-0" />
+                <span className="text-white truncate">Add Comment</span>
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[500px]">
+            <DialogContent className="sm:max-w-[650px]">
               <DialogHeader>
                 <DialogTitle className="text-xl flex items-center gap-2 text-white">
                   <Building2 className="h-5 w-5 text-primary" />
                   Add Comment - {company.company_name}
                 </DialogTitle>
               </DialogHeader>
-              <div className="space-y-5 mt-4">
+              <div className="space-y-4 mt-4">
+                {/* Company Details Section */}
+                <div className="p-3 bg-muted/30 rounded-lg border border-border">
+                  <h3 className="text-sm font-semibold text-white mb-2">Company Details</h3>
+                  <div className="space-y-2 text-sm">
+                    {company.company_name && (
+                      <div className="flex items-start gap-2">
+                        <span className="font-semibold text-white/80 min-w-[120px] flex-shrink-0">Company:</span>
+                        <span className="text-white flex-1">{company.company_name}</span>
+                      </div>
+                    )}
+                    {company.phone && (
+                      <div className="flex items-start gap-2">
+                        <Phone className="h-4 w-4 text-primary flex-shrink-0 mt-0.5" />
+                        <span className="font-semibold text-white/80 min-w-[120px] flex-shrink-0">Phone:</span>
+                        <span className="text-white flex-1">{company.phone}</span>
+                      </div>
+                    )}
+                    {company.address && (
+                      <div className="flex items-start gap-2">
+                        <MapPin className="h-4 w-4 text-primary flex-shrink-0 mt-0.5" />
+                        <span className="font-semibold text-white/80 min-w-[120px] flex-shrink-0">Address:</span>
+                        <span className="text-white flex-1">{company.address}</span>
+                      </div>
+                    )}
+                    {company.products_services && (
+                      <div className="flex items-start gap-2">
+                        <span className="font-semibold text-white/80 min-w-[120px] flex-shrink-0">Products & Services:</span>
+                        <span className="text-white flex-1">{company.products_services}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
                 <div className="space-y-2">
                   <label className="text-sm font-semibold text-white">Comment</label>
                   <Textarea
                     value={commentText}
                     onChange={(e) => setCommentText(e.target.value)}
                     placeholder="Enter your comment..."
-                    rows={5}
+                    rows={4}
                     className="resize-none text-white"
                   />
                 </div>
@@ -457,9 +480,6 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
                         </SelectItem>
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-white/70">
-                      This will update the company's category to: <span className="font-semibold text-white">{getCategoryIcon(category)} {getCategoryDisplayName(category)}</span>
-                    </p>
                   </div>
                 </div>
                 <Button 
@@ -489,9 +509,9 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
                 <Button
                   variant="outline"
                   size="sm"
-                  className="bg-primary text-white hover:bg-primary hover:text-primary-foreground transition-colors"
+                  className="bg-primary text-white hover:bg-primary hover:text-primary-foreground transition-colors h-9 flex-shrink-0"
                 >
-                  <MessageSquare className="mr-1.5 h-3.5 w-3.5 text-white" />
+                  <MessageSquare className="mr-1.5 h-3.5 w-3.5 text-white flex-shrink-0" />
                   <span className="font-semibold text-white">{company.comments.length}</span>
                 </Button>
               </DialogTrigger>
@@ -506,7 +526,8 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
                 <ScrollArea className="h-[65vh] pr-4">
                   <div className="space-y-4">
                     {company.comments
-                      .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                      .slice()
+                      .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
                       .map((comment: any) => (
                       <Card key={comment.id} className="p-4 hover:shadow-md transition-shadow border-l-4 border-l-primary/50">
                         <div className="flex items-start justify-between mb-3">
@@ -557,7 +578,7 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
               variant="destructive" 
               size="icon" 
               onClick={handleDelete}
-              className="hover:scale-105 transition-transform"
+              className="hover:scale-105 transition-transform h-9 w-9 flex-shrink-0"
             >
               <Trash2 className="h-4 w-4" />
             </Button>

@@ -5,11 +5,14 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { LogOut, Menu, RefreshCw } from "lucide-react";
 import { LucideIcon } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import Logo from "/logo.jpeg";
+
 
 interface MenuItem {
   id: string;
   label: string;
   icon: LucideIcon;
+  count?: number;
 }
 
 interface DashboardLayoutProps {
@@ -32,21 +35,27 @@ const DashboardLayout = ({
   const SidebarContent = () => (
     <>
       <div className="p-6 border-b border-sidebar-border text-white">
-        <div className="flex items-center justify-between ">
-          <div>
-            <h1 className="text-2xl font-bold text-white">CRM System</h1>
-            <p className="text-sm mt-1 text-white">{user.email}</p>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => window.location.reload()}
-            title="Refresh data"
-          >
-            <RefreshCw className="h-4 w-4" />
-          </Button>
-        </div>
+  <div className="flex items-center justify-between">
+    <div className="flex items-center gap-3">
+      <img src={Logo} alt="Logo" className="h-10 w-auto" />
+
+      <div>
+        <h1 className="text-xl font-bold text-white">CRM System</h1>
+        <p className="text-sm mt-1 text-white">{user.email}</p>
       </div>
+    </div>
+
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={() => window.location.reload()}
+      title="Refresh data"
+    >
+      <RefreshCw className="h-4 w-4" />
+    </Button>
+  </div>
+</div>
+
       <ScrollArea className="flex-1 px-3 py-4">
         <div className="space-y-1">
           {menuItems.map((item) => {
@@ -55,11 +64,18 @@ const DashboardLayout = ({
               <Button
                 key={item.id}
                 variant={currentView === item.id ? "default" : "ghost"}
-                className="w-full justify-start"
+                className="w-full justify-between"
                 onClick={() => onViewChange(item.id)}
               >
-                <Icon className="mr-2 h-4 w-4" />
-                {item.label}
+                <div className="flex items-center flex-1 min-w-0">
+                  <Icon className="mr-2 h-4 w-4 flex-shrink-0" />
+                  <span className="truncate">{item.label}</span>
+                </div>
+                {item.count !== undefined && item.count > 0 && (
+                  <span className="ml-2 bg-white/90 text-black rounded-full px-2 py-0.5 text-xs font-bold min-w-[24px] text-center flex-shrink-0">
+                    {item.count}
+                  </span>
+                )}
               </Button>
             );
           })}

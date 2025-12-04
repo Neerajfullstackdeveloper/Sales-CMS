@@ -57,7 +57,7 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
       `)
       .eq("assigned_to_id", userId)
       .is("deleted_at", null)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: true });
 
     if (!error && data) {
       // Filter out companies assigned for more than 24 hours
@@ -202,7 +202,7 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 items-stretch">
           {companies.map((company) => (
             <CompanyCard
               key={company.id}

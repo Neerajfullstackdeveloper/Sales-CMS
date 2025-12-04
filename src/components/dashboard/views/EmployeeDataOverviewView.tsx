@@ -491,7 +491,7 @@ const EmployeeDataOverviewView = ({ userId }: EmployeeDataOverviewViewProps) => 
                                           <ScrollArea className="h-[60vh] pr-4">
                                             <div className="space-y-4">
                                               {company.comments
-                                                .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                                                .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
                                                 .map((comment: any) => (
                                                 <Card key={comment.id} className="p-4">
                                                   <div className="flex items-start justify-between mb-3">
@@ -537,7 +537,7 @@ const EmployeeDataOverviewView = ({ userId }: EmployeeDataOverviewViewProps) => 
                                           </summary>
                                           <div className="mt-2 space-y-2 max-h-40 overflow-y-auto">
                                             {company.comments
-                                              .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                                              .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
                                               .slice(0, 3)
                                               .map((comment: any) => (
                                               <div key={comment.id} className="p-2 bg-white border rounded">
@@ -718,7 +718,7 @@ const EmployeeDataOverviewView = ({ userId }: EmployeeDataOverviewViewProps) => 
                                           <ScrollArea className="h-[60vh] pr-4">
                                             <div className="space-y-4">
                                               {company.comments
-                                                .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                                                .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
                                                 .map((comment: any) => (
                                                 <Card key={comment.id} className="p-4">
                                                   <div className="flex items-start justify-between mb-3">
@@ -764,7 +764,7 @@ const EmployeeDataOverviewView = ({ userId }: EmployeeDataOverviewViewProps) => 
                                           </summary>
                                           <div className="mt-2 space-y-2 max-h-40 overflow-y-auto">
                                             {company.comments
-                                              .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                                              .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
                                               .slice(0, 3)
                                               .map((comment: any) => (
                                               <div key={comment.id} className="p-2 bg-white border rounded">

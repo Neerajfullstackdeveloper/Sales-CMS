@@ -200,8 +200,8 @@ const DataRequestsView = () => {
         toast.error("Failed to load Facebook data. Please try again.");
       }
     } else {
-      // Regular approval for non-Facebook requests
-      await handleUpdateStatus(request.id, "approved");
+      // General data request: approve and automatically assign companies
+      await approveGeneralRequestAndAssign(request);
     }
   };
 
@@ -331,6 +331,70 @@ const DataRequestsView = () => {
     }
   };
 
+  const GENERAL_ASSIGNMENT_BATCH_SIZE = 25;
+
+  // Approve a general (non-Facebook) data request and automatically assign
+  // the first 25 unassigned companies to the requesting employee.
+  const approveGeneralRequestAndAssign = async (request: any) => {
+    try {
+      // 1) Approve the request
+      const { error: updateError } = await supabase
+        .from("data_requests")
+        .update({ status: "approved" })
+        .eq("id", request.id);
+
+      if (updateError) throw updateError;
+
+      // 2) Fetch the first batch of unassigned companies (oldest first)
+      const { data: unassignedCompanies, error: companiesError } = await supabase
+        .from("companies")
+        .select("id")
+        .is("assigned_to_id", null)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: true })
+        .limit(GENERAL_ASSIGNMENT_BATCH_SIZE);
+
+      if (companiesError) throw companiesError;
+
+      const companiesToAssign = unassignedCompanies || [];
+
+      if (companiesToAssign.length === 0) {
+        toast.warning("Request approved but no unassigned companies were available to assign.");
+        fetchRequests();
+        return;
+      }
+
+      const companyIds = companiesToAssign.map((c: any) => c.id);
+      const nowIso = new Date().toISOString();
+
+      // 3) Assign the companies to the requesting employee
+      const { error: assignError } = await supabase
+        .from("companies")
+        .update({ assigned_to_id: request.requested_by_id, assigned_at: nowIso })
+        .in("id", companyIds);
+
+      if (assignError) throw assignError;
+
+      const assignedCount = companyIds.length;
+      toast.success(
+        `Request approved and ${assignedCount} compan${assignedCount === 1 ? "y" : "ies"} assigned to ${
+          request.requested_by?.display_name || "employee"
+        }.`
+      );
+
+      // 4) Notify dashboards to refresh company-related counts
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("companyDataUpdated"));
+      }
+
+      // 5) Refresh the requests list
+      fetchRequests();
+    } catch (error: any) {
+      console.error("Error approving general data request:", error);
+      toast.error(error.message || "Failed to approve request and assign data");
+    }
+  };
+
   const toggleDataSelection = (id: number) => {
     // Don't allow selecting already-shared data
     if (alreadySharedIds.has(id)) {
@@ -416,16 +480,16 @@ const DataRequestsView = () => {
                   <div className="flex gap-2">
                     <Button
                       size="sm"
-                          onClick={() => handleApprove(request)}
-                        >
-                          {isFBRequest ? (
-                            <>
-                              <Share2 className="mr-2 h-4 w-4" />
-                              Approve & Share
-                            </>
-                          ) : (
-                            "Approve"
-                          )}
+                      onClick={() => handleApprove(request)}
+                    >
+                      {isFBRequest ? (
+                        <>
+                          <Share2 className="mr-2 h-4 w-4" />
+                          Approve & Share
+                        </>
+                      ) : (
+                        "Approve"
+                      )}
                     </Button>
                     <Button
                       size="sm"
@@ -487,7 +551,7 @@ const DataRequestsView = () => {
                   </span>
                 )}
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 text-white">
                 <Button 
                   variant="outline" 
                   size="sm" 
@@ -518,73 +582,129 @@ const DataRequestsView = () => {
                   <ScrollArea className="h-full w-full">
                     <div className="p-4 space-y-2">
                     {availableFacebookData && availableFacebookData.length > 0 ? (
-                      availableFacebookData.map((item: any) => {
-                        const isSelected = selectedDataIds.includes(item.id);
-                        const isAlreadyShared = alreadySharedIds.has(item.id);
-                        return (
-                          <div
-                            key={item.id}
-                            className={`flex items-center gap-4 p-4 border-2 rounded-lg transition-all ${
-                              isAlreadyShared
-                                ? "bg-muted/30 border-muted opacity-60 cursor-not-allowed"
-                                : isSelected
-                                ? "bg-primary/5 border-primary shadow-sm cursor-pointer"
-                                : "hover:bg-muted/50 border-border hover:border-primary/50 cursor-pointer"
-                            }`}
-                            onClick={() => !isAlreadyShared && toggleDataSelection(item.id)}
-                          >
-                            <div className="flex-shrink-0">
-                              <Checkbox
-                                checked={isSelected}
-                                disabled={isAlreadyShared}
-                                onCheckedChange={() => toggleDataSelection(item.id)}
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-start justify-between gap-4">
+                      <>
+                        {/* Available Items (Not Already Shared) */}
+                        {availableFacebookData
+                          .filter((item: any) => !alreadySharedIds.has(item.id))
+                          .map((item: any) => {
+                            const isSelected = selectedDataIds.includes(item.id);
+                            return (
+                              <div
+                                key={item.id}
+                                className={`flex items-center gap-4 p-4 border-2 rounded-lg transition-all ${
+                                  isSelected
+                                    ? "bg-primary/5 border-primary shadow-sm cursor-pointer"
+                                    : "hover:bg-muted/50 border-border hover:border-primary/50 cursor-pointer"
+                                }`}
+                                onClick={() => toggleDataSelection(item.id)}
+                              >
+                                <div className="flex-shrink-0">
+                                  <Checkbox
+                                    checked={isSelected}
+                                    onCheckedChange={() => toggleDataSelection(item.id)}
+                                    onClick={(e) => e.stopPropagation()}
+                                  />
+                                </div>
                                 <div className="flex-1 min-w-0">
-                                  <p className="font-semibold text-base mb-1 truncate text-white">
-                                    {item.name || "Unknown"}
-                                  </p>
-                                  <div className="flex items-center gap-4 text-sm">
-                                    {item.email && (
-                                      <p className="text-white/80 truncate">
-                                        {item.email}
+                                  <div className="flex items-start justify-between gap-4">
+                                    <div className="flex-1 min-w-0">
+                                      <p className="font-semibold text-base mb-1 truncate text-white">
+                                        {item.company_name || item.name || "Unknown"}
                                       </p>
-                                    )}
-                                    {item.phone && (
-                                      <p className="text-white/80 truncate">
-                                        {item.phone}
-                                      </p>
-                                    )}
-                                    {item.created_at && (
-                                      <p className="text-xs text-white/70 whitespace-nowrap">
-                                        {new Date(item.created_at).toLocaleDateString()}
-                                      </p>
-                                    )}
+                                      <div className="flex items-center gap-4 text-sm">
+                                        {item.email && (
+                                          <p className="text-white/80 truncate">
+                                            {item.email}
+                                          </p>
+                                        )}
+                                        {item.phone && (
+                                          <p className="text-white/80 truncate">
+                                            {item.phone}
+                                          </p>
+                                        )}
+                                        {item.created_at && (
+                                          <p className="text-xs text-white/70 whitespace-nowrap">
+                                            {new Date(item.created_at).toLocaleDateString()}
+                                          </p>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-2 flex-shrink-0">
+                                      <Badge variant="outline" className="text-xs font-mono text-white border-white/30">
+                                        ID: {item.id}
+                                      </Badge>
+                                      {isSelected && (
+                                        <div className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground">
+                                          <Check className="h-4 w-4" />
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-2 flex-shrink-0">
-                                  <Badge variant="outline" className="text-xs font-mono text-white border-white/30">
-                                    ID: {item.id}
-                                  </Badge>
-                                  {isAlreadyShared && (
-                                    <Badge variant="secondary" className="text-xs bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                                      Already Shared
-                                    </Badge>
-                                  )}
-                                  {isSelected && !isAlreadyShared && (
-                                    <div className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground">
-                                      <Check className="h-4 w-4" />
-                                    </div>
-                                  )}
-                                </div>
                               </div>
+                            );
+                          })}
+                        
+                        {/* Already Shared Items Section */}
+                        {availableFacebookData.some((item: any) => alreadySharedIds.has(item.id)) && (
+                          <>
+                            <div className="pt-4 pb-2 border-t border-border/50">
+                              <h3 className="text-sm font-semibold text-white/80 uppercase tracking-wide">
+                                Already Shared ({availableFacebookData.filter((item: any) => alreadySharedIds.has(item.id)).length})
+                              </h3>
                             </div>
-                          </div>
-                        );
-                      })
+                            {availableFacebookData
+                              .filter((item: any) => alreadySharedIds.has(item.id))
+                              .map((item: any) => (
+                                <div
+                                  key={item.id}
+                                  className="flex items-center gap-4 p-4 border-2 rounded-lg bg-muted/30 border-muted opacity-60 cursor-not-allowed"
+                                >
+                                  <div className="flex-shrink-0">
+                                    <Checkbox
+                                      checked={false}
+                                      disabled={true}
+                                    />
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-start justify-between gap-4">
+                                      <div className="flex-1 min-w-0">
+                                        <p className="font-semibold text-base mb-1 truncate text-white">
+                                          {item.company_name || item.name || "Unknown"}
+                                        </p>
+                                        <div className="flex items-center gap-4 text-sm">
+                                          {item.email && (
+                                            <p className="text-white/80 truncate">
+                                              {item.email}
+                                            </p>
+                                          )}
+                                          {item.phone && (
+                                            <p className="text-white/80 truncate">
+                                              {item.phone}
+                                            </p>
+                                          )}
+                                          {item.created_at && (
+                                            <p className="text-xs text-white/70 whitespace-nowrap">
+                                              {new Date(item.created_at).toLocaleDateString()}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-2 flex-shrink-0">
+                                        <Badge variant="outline" className="text-xs font-mono text-white border-white/30">
+                                          ID: {item.id}
+                                        </Badge>
+                                        <Badge variant="secondary" className="text-xs bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                                          Already Shared
+                                        </Badge>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                          </>
+                        )}
+                      </>
                     ) : (
                       <div className="flex flex-col items-center justify-center py-16">
                         <p className="text-sm font-medium text-white mb-1">

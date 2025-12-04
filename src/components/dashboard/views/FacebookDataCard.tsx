@@ -9,7 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { User, Mail, Calendar, MessageSquare, Clock, Loader2, Edit, Pencil, Trash2, Phone, Share2, CheckCircle2 } from "lucide-react";
+import { User, Mail, Calendar, MessageSquare, Clock, Loader2, Edit, Pencil, Trash2, Phone, Share2, CheckCircle2, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface FacebookDataCardProps {
@@ -122,8 +122,11 @@ const FacebookDataCard = ({
   const [open, setOpen] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
 
-  const lastComment = data.comments?.[0];
-  const comments = data.comments || [];
+  const sortedComments = (data.comments || []).slice().sort(
+    (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+  const lastComment = sortedComments.length > 0 ? sortedComments[sortedComments.length - 1] : undefined;
+  const comments = sortedComments;
 
   // Reset form when dialog opens/closes
   React.useEffect(() => {
@@ -243,69 +246,102 @@ const FacebookDataCard = ({
   };
 
   return (
-    <Card className="group hover:shadow-lg transition-all duration-300 hover:border-primary/20 border-2 overflow-hidden">
-      <CardHeader className="pb-4">
-        <div className="flex items-start justify-between gap-3">
+    <Card className="group hover:shadow-lg transition-all duration-300 hover:border-primary/20 border-2 overflow-hidden flex flex-col h-full">
+      <CardHeader className="pb-4 flex-shrink-0">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-start justify-end gap-3">
+            {userRole === "admin" && onEdit && (
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={onEdit}
+                className="h-8 w-8 bg-primary text-white hover:bg-primary hover:text-white transition-colors flex-shrink-0"
+              >
+                <Edit className="h-4 w-4 text-white" />
+              </Button>
+            )}
+            {userRole !== "admin" && (
+              approvedForEdit ? (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8 bg-green-600 text-white hover:bg-green-600 hover:text-white transition-colors flex-shrink-0 cursor-default"
+                  disabled
+                >
+                  <CheckCircle2 className="h-4 w-4 text-white" />
+                </Button>
+              ) : onRequestEdit ? (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={onRequestEdit}
+                  className="h-8 w-8 bg-primary text-white hover:bg-primary hover:text-white transition-colors flex-shrink-0"
+                >
+                  <Pencil className="h-4 w-4 text-white" />
+                </Button>
+              ) : null
+            )}
+          </div>
           <div className="flex-1 min-w-0">
-            <CardTitle className="flex items-center gap-2 text-lg font-semibold mb-2 text-foreground">
+            <CardTitle className="flex items-center gap-2 text-lg font-semibold text-foreground">
               <User className="h-5 w-5 text-primary flex-shrink-0" />
               <span className="truncate">{data.name || data.company_name || "Unknown"}</span>
             </CardTitle>
-            <Badge variant="outline" className="text-xs">
-              ID: {data.id}
-            </Badge>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {onDelete && (
-              <Button
-                variant="destructive"
-                size="icon"
-                onClick={onDelete}
-                className="hover:scale-110 active:scale-95 transition-transform shrink-0 h-8 w-8"
-                title="Delete"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
+            {userRole !== "admin" && data.owner_name && (
+              <p className="text-sm text-muted-foreground truncate mt-1">{data.owner_name}</p>
+            )}
+            {userRole === "admin" && (
+              <Badge variant="outline" className="text-xs mt-1">
+                ID: {data.id}
+              </Badge>
             )}
           </div>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4 pt-0 overflow-hidden">
-        <div className="space-y-2.5 text-sm">
+      <CardContent className="space-y-4 pt-0 overflow-hidden flex flex-col min-h-0">
+        <div className="space-y-2.5 text-sm flex-1 min-h-0 overflow-hidden">
           {data.phone && (
-            <div className="flex items-center gap-2.5 text-muted-foreground hover:text-foreground transition-colors">
+            <div className="flex items-center gap-2.5 text-muted-foreground hover:text-foreground transition-colors min-h-[20px]">
               <Phone className="h-4 w-4 flex-shrink-0 text-primary" />
               <a href={`tel:${data.phone}`} className="hover:underline truncate text-sm text-foreground">{data.phone}</a>
             </div>
           )}
           {data.email && (
-            <div className="flex items-center gap-2.5 text-muted-foreground hover:text-foreground transition-colors">
+            <div className="flex items-center gap-2.5 text-muted-foreground hover:text-foreground transition-colors min-h-[20px]">
               <Mail className="h-4 w-4 flex-shrink-0 text-primary" />
               <a href={`mailto:${data.email}`} className="hover:underline truncate text-sm text-foreground">{data.email}</a>
             </div>
           )}
-          {data.company_name && (
-            <div className="text-sm text-foreground">
-              <span className="font-semibold">Company:</span>{" "}
-              <span className="break-words">{data.company_name}</span>
+          {userRole === "admin" && data.company_name && (
+            <div className="text-sm text-foreground min-h-[20px] flex items-center gap-2">
+              <span className="font-semibold min-w-[70px] flex-shrink-0">Company:</span>
+              <span className="flex-1 truncate min-w-0">{data.company_name}</span>
             </div>
           )}
-          {data.owner_name && (
-            <div className="text-sm text-foreground">
-              <span className="font-semibold">Owner:</span>{" "}
-              <span className="break-words">{data.owner_name}</span>
+          {userRole === "admin" && data.owner_name && (
+            <div className="text-sm text-foreground min-h-[20px] flex items-center gap-2">
+              <span className="font-semibold min-w-[70px] flex-shrink-0">Owner:</span>
+              <span className="flex-1 truncate min-w-0">{data.owner_name}</span>
             </div>
           )}
-          {data.products && (
-            <div className="text-sm text-foreground">
-              <span className="font-semibold">Products:</span>{" "}
-              <span className="break-words whitespace-pre-wrap">{data.products}</span>
+          {userRole === "admin" && data.products && (
+            <div className="text-sm text-foreground min-h-[20px] flex items-center gap-2">
+              <span className="font-semibold min-w-[70px] flex-shrink-0">Products:</span>
+              <span className="flex-1 truncate min-w-0">{data.products}</span>
             </div>
           )}
-          {data.services && (
-            <div className="text-sm text-foreground">
-              <span className="font-semibold">Services:</span>{" "}
-              <span className="break-words whitespace-pre-wrap">{data.services}</span>
+          {userRole === "admin" && data.services && (
+            <div className="text-sm text-foreground min-h-[20px] flex items-center gap-2">
+              <span className="font-semibold min-w-[70px] flex-shrink-0">Services:</span>
+              <span className="flex-1 truncate min-w-0">{data.services}</span>
+            </div>
+          )}
+          {userRole !== "admin" && (data.products || data.services) && (
+            <div className="text-sm text-foreground min-h-[20px] flex items-center gap-2 pt-1 border-t">
+              <span className="font-semibold min-w-[140px] flex-shrink-0">Products & Services:</span>
+              <span className="flex-1 truncate min-w-0">
+                {[data.products, data.services].filter(Boolean).join(", ")}
+              </span>
             </div>
           )}
           {lastComment && userRole !== "admin" && (
@@ -320,7 +356,7 @@ const FacebookDataCard = ({
                 <Clock className="h-3 w-3 text-primary" />
                 <span>
                   <span className="font-semibold text-foreground">Category Updated:</span>{" "}
-                  {new Date(lastComment.comment_date || lastComment.created_at).toLocaleDateString('en-US', {
+                  {new Date(lastComment.created_at).toLocaleString('en-US', {
                     year: 'numeric',
                     month: 'short',
                     day: 'numeric',
@@ -333,7 +369,7 @@ const FacebookDataCard = ({
           )}
           <div className="space-y-1.5">
             {data.created_at && (
-              <div className="flex items-center gap-2.5 text-muted-foreground">
+              <div className="flex items-center gap-2.5 text-muted-foreground min-h-[20px]">
                 <Calendar className="h-4 w-4 flex-shrink-0 text-primary" />
                 <span className="text-sm text-foreground">
                   <span className="font-semibold">Uploaded:</span>{" "}
@@ -348,7 +384,7 @@ const FacebookDataCard = ({
               </div>
             )}
             {data.shared_at && (
-              <div className="flex items-center gap-2.5 text-primary">
+              <div className="flex items-center gap-2.5 text-primary min-h-[20px]">
                 <Share2 className="h-4 w-4 flex-shrink-0 text-primary" />
                 <span className="text-sm text-foreground">
                   <span className="font-semibold">Shared:</span>{" "}
@@ -366,7 +402,7 @@ const FacebookDataCard = ({
         </div>
 
         {lastComment && userRole === "admin" && (
-          <div className="border-t pt-4 bg-muted/30 rounded-lg p-3 -mx-1 text-white">
+          <div className="border-t pt-4 bg-muted/30 rounded-lg p-3 -mx-1 text-white mt-auto">
             <div className="flex items-center gap-2 mb-2">
               <p className="text-xs font-semibold text-foreground uppercase tracking-wide">Last Comment</p>
               <Badge variant="outline" className="text-xs px-2 py-0.5">
@@ -376,50 +412,78 @@ const FacebookDataCard = ({
             <p className="text-sm text-foreground leading-relaxed mb-2">{lastComment.comment_text}</p>
             <p className="text-xs text-muted-foreground flex items-center gap-1">
               <Clock className="h-3 w-3" />
-              {lastComment.comment_date
-                ? new Date(lastComment.comment_date).toLocaleDateString('en-US', { 
-                    year: 'numeric', 
-                    month: 'short', 
-                    day: 'numeric' 
-                  })
-                : new Date(lastComment.created_at).toLocaleString('en-US', {
-                    year: 'numeric',
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
+              {new Date(lastComment.created_at).toLocaleString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              })}
             </p>
           </div>
         )}
 
-        <div className={`flex gap-2 pt-3 border-t flex-wrap w-full ${userRole !== "admin" ? "gap-1.5" : "gap-2"}`}>
+        <div className={`flex gap-2 pt-3 border-t flex-nowrap w-full mt-auto items-center ${userRole !== "admin" ? "gap-1.5" : "gap-2"}`}>
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button 
                 variant="outline" 
                 size="sm"
-                className={`${userRole !== "admin" ? "flex-1 h-8 text-xs px-2 min-w-0" : "flex-1 min-w-[100px] max-w-full"} bg-primary text-white hover:bg-primary hover:text-white transition-colors font-medium`}
+                className={`${userRole !== "admin" ? "flex-1 h-9 text-xs px-2 min-w-0" : "flex-1 min-w-[100px] max-w-full h-9"} bg-primary text-white hover:bg-primary hover:text-white transition-colors font-medium`}
               >
                 <MessageSquare className={`${userRole !== "admin" ? "mr-1.5 h-3.5 w-3.5 flex-shrink-0" : "mr-2 h-4 w-4 flex-shrink-0"} text-white`} />
                 <span className={`${userRole !== "admin" ? "text-xs " : ""} truncate text-white`}>Add Comment</span>
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[500px]">
+            <DialogContent className="sm:max-w-[650px]">
               <DialogHeader>
                 <DialogTitle className="text-xl flex items-center gap-2 text-white">
                   <User className="h-5 w-5 text-primary" />
-                  Add Comment - {data.name || "Unknown"}
+                  Add Comment - {data.name || data.company_name || "Unknown"}
                 </DialogTitle>
               </DialogHeader>
-              <div className="space-y-5 mt-4">
+              <div className="space-y-4 mt-4">
+                {/* Company Details Section */}
+                <div className="p-3 bg-muted/30 rounded-lg border border-border">
+                  <h3 className="text-sm font-semibold text-white mb-2">Company Details</h3>
+                  <div className="space-y-2 text-sm">
+                    {data.company_name && (
+                      <div className="flex items-start gap-2">
+                        <span className="font-semibold text-white/80 min-w-[120px] flex-shrink-0">Company:</span>
+                        <span className="text-white flex-1">{data.company_name}</span>
+                      </div>
+                    )}
+                    {data.phone && (
+                      <div className="flex items-start gap-2">
+                        <Phone className="h-4 w-4 text-primary flex-shrink-0 mt-0.5" />
+                        <span className="font-semibold text-white/80 min-w-[120px] flex-shrink-0">Phone:</span>
+                        <span className="text-white flex-1">{data.phone}</span>
+                      </div>
+                    )}
+                    {data.address && (
+                      <div className="flex items-start gap-2">
+                        <MapPin className="h-4 w-4 text-primary flex-shrink-0 mt-0.5" />
+                        <span className="font-semibold text-white/80 min-w-[120px] flex-shrink-0">Address:</span>
+                        <span className="text-white flex-1">{data.address}</span>
+                      </div>
+                    )}
+                    {(data.products || data.services) && (
+                      <div className="flex items-start gap-2">
+                        <span className="font-semibold text-white/80 min-w-[120px] flex-shrink-0">Products & Services:</span>
+                        <span className="text-white flex-1">
+                          {[data.products, data.services].filter(Boolean).join(", ")}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
                 <div className="space-y-2">
                   <label className="text-sm font-semibold text-white">Comment</label>
                   <Textarea
                     value={commentText}
                     onChange={(e) => setCommentText(e.target.value)}
                     placeholder="Enter your comment..."
-                    rows={5}
+                    rows={4}
                     className="resize-none text-white placeholder:text-white/50"
                   />
                 </div>
@@ -475,9 +539,6 @@ const FacebookDataCard = ({
                         </SelectItem>
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-white/70">
-                      This will update the category to: <span className="font-semibold text-white">{getCategoryIcon(category)} {getCategoryDisplayName(category)}</span>
-                    </p>
                   </div>
                 </div>
                 <Button 
@@ -507,9 +568,9 @@ const FacebookDataCard = ({
                 <Button 
                   variant="outline" 
                   size="sm"
-                  className={`${userRole !== "admin" ? "h-8 w-8 p-0 relative flex-shrink-0" : "flex-shrink-0"} bg-primary text-white hover:bg-primary hover:text-white transition-colors`}
+                  className={`${userRole !== "admin" ? "h-9 w-9 p-0 relative flex-shrink-0" : "flex-shrink-0 h-9"} bg-primary text-white hover:bg-primary hover:text-white transition-colors`}
                 >
-                  <MessageSquare className={`${userRole !== "admin" ? "h-3.5 w-3.5" : "mr-1.5 h-3.5 w-3.5"} text-white`} />
+                  <MessageSquare className={`${userRole !== "admin" ? "h-3.5 w-3.5" : "mr-1.5 h-3.5 w-3.5"} text-white flex-shrink-0`} />
                   {userRole === "admin" && <span className="font-semibold">{comments.length}</span>}
                   {userRole !== "admin" && (
                     <span className="absolute -top-1 -right-1 bg-primary text-primary-foreground rounded-full h-4 w-4 flex items-center justify-center text-[10px] font-semibold ">
@@ -577,45 +638,15 @@ const FacebookDataCard = ({
             </Dialog>
           )}
 
-          {userRole === "admin" ? (
-            <>
-              {onEdit && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onEdit}
-                  className="flex-1 min-w-[80px] max-w-full bg-primary text-white hover:bg-primary hover:text-white transition-colors font-medium"
-                >
-                  <Edit className="mr-2 h-4 w-4 flex-shrink-0 text-white" />
-                  <span className="truncate text-white">Edit</span>
-                </Button>
-              )}
-            </>
-          ) : (
-            <>
-              {approvedForEdit ? (
-                // When request is approved, show a non-clickable "Approved" state
-                <Button
-                  variant="default"
-                  size="sm"
-                  disabled
-                  className="flex-1 h-8 text-xs px-2 bg-green-600 hover:bg-green-600 cursor-default font-medium text-white"
-                >
-                  <CheckCircle2 className="mr-1.5 h-3.5 w-3.5 text-white" />
-                  <span className="text-xs text-white">Edit Request Approved</span>
-                </Button>
-              ) : onRequestEdit ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onRequestEdit}
-                  className="bg-primary text-white hover:bg-primary hover:text-white transition-colors"
-                >
-                  <Pencil className="mr-1.5 h-3.5 w-3.5 text-white" />
-                  <span className="text-xs text-white">Request Edit</span>
-                </Button>
-              ) : null}
-            </>
+          {onDelete && (
+            <Button 
+              variant="destructive" 
+              size="icon" 
+              onClick={onDelete}
+              className="hover:scale-105 transition-transform h-9 w-9 flex-shrink-0"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
           )}
         </div>
       </CardContent>
