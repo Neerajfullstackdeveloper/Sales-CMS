@@ -35,6 +35,7 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
   const navigate = useNavigate();
   const [currentView, setCurrentView] = useState("assigned");
   const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
+  const [userName, setUserName] = useState<string>("");
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -101,13 +102,15 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
       }
 
       // Fetch today data count (companies/facebook data with comments from today)
+      // Exclude inactive data (deletion_state='inactive' or latest comment is 'block')
       const today = new Date().toISOString().split('T')[0];
       
       const { data: todayCompanies } = await supabase
         .from("companies")
         .select(`
           id,
-          comments (id, created_at)
+          deletion_state,
+          comments (id, category, created_at)
         `)
         .eq("assigned_to_id", user.id)
         .is("deleted_at", null);
@@ -115,7 +118,20 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
       let todayCount = 0;
       if (todayCompanies) {
         const todayCompaniesCount = todayCompanies.filter((company: any) => {
+          // Exclude companies with deletion_state set (inactive or recycle bins)
+          if (company.deletion_state) return false;
+          
           if (!company.comments || company.comments.length === 0) return false;
+          
+          // Exclude companies where latest comment is 'block' category (moved to inactive)
+          const sortedComments = [...company.comments].sort((a: any, b: any) => 
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          );
+          const latestComment = sortedComments[0];
+          if (latestComment && latestComment.category === 'block') {
+            return false; // Exclude - it's in inactive section
+          }
+          
           return company.comments.some((comment: any) => comment.created_at.startsWith(today));
         }).length;
         todayCount += todayCompaniesCount;
@@ -123,14 +139,52 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
 
       if (shares && shares.length > 0) {
         const fbIds = shares.map((s: any) => s.facebook_data_id);
-        const { data: todayFbComments } = await (supabase
+        
+        // Fetch Facebook data with deletion_state
+        const { data: fbData } = await (supabase
+          .from("facebook_data" as any)
+          .select("id, deletion_state")
+          .in("id", fbIds) as any);
+        
+        // Fetch all comments for these Facebook data items
+        const { data: allFbComments } = await (supabase
           .from("facebook_data_comments" as any)
-          .select("facebook_data_id")
-          .in("facebook_data_id", fbIds)
-          .gte("created_at", `${today}T00:00:00`)
-          .lt("created_at", `${today}T23:59:59`) as any);
-
-        if (todayFbComments) {
+          .select("facebook_data_id, category, created_at")
+          .in("facebook_data_id", fbIds) as any);
+        
+        if (fbData && allFbComments) {
+          // Group comments by facebook_data_id and get latest comment for each
+          const fbLatestComments: Record<number, any> = {};
+          allFbComments.forEach((comment: any) => {
+            const fbId = comment.facebook_data_id;
+            if (!fbLatestComments[fbId] || 
+                new Date(comment.created_at) > new Date(fbLatestComments[fbId].created_at)) {
+              fbLatestComments[fbId] = comment;
+            }
+          });
+          
+          // Filter Facebook data: exclude inactive and count only those with today's comments
+          const activeFbIds = fbData
+            .filter((fb: any) => {
+              // Exclude items with deletion_state set (inactive or recycle bins)
+              if (fb.deletion_state) return false;
+              
+              // Exclude items where latest comment is 'block' category (moved to inactive)
+              const latestComment = fbLatestComments[fb.id];
+              if (latestComment && latestComment.category === 'block') {
+                return false; // Exclude - it's in inactive section
+              }
+              
+              return true;
+            })
+            .map((fb: any) => fb.id);
+          
+          // Count only active Facebook data with comments from today
+          const todayFbComments = allFbComments.filter((comment: any) => 
+            activeFbIds.includes(comment.facebook_data_id) &&
+            comment.created_at.startsWith(today)
+          );
+          
           const uniqueFbIds = new Set(todayFbComments.map((c: any) => c.facebook_data_id));
           todayCount += uniqueFbIds.size;
         }
@@ -208,12 +262,54 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
   };
 
   useEffect(() => {
+    let isMounted = true;
+    let intervalId: NodeJS.Timeout | null = null;
+    
+    // Load counts asynchronously without blocking render
     fetchCategoryCounts();
-    // Refresh counts periodically
-    const interval = setInterval(fetchCategoryCounts, 30000); // Every 30 seconds
-    return () => clearInterval(interval);
+    
+    // Refresh counts periodically (only when tab is visible)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && isMounted) {
+        fetchCategoryCounts();
+      }
+    };
+    
+    // Refresh counts every 30 seconds when visible
+    intervalId = setInterval(() => {
+      if (document.visibilityState === "visible" && isMounted) {
+        fetchCategoryCounts();
+      }
+    }, 30000);
+    
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    
+    return () => {
+      isMounted = false;
+      if (intervalId) clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user.id]);
+
+  // Fetch user's display name
+  useEffect(() => {
+    const fetchUserName = async () => {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("display_name")
+        .eq("id", user.id)
+        .single();
+      
+      if (profile?.display_name) {
+        setUserName(profile.display_name);
+      } else {
+        setUserName(user.email?.split("@")[0] || "Employee");
+      }
+    };
+    
+    fetchUserName();
+  }, [user.id, user.email]);
 
   // Listen for data update events
   useEffect(() => {
@@ -223,7 +319,7 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
 
     window.addEventListener('facebookDataUpdated', handleDataUpdate);
     window.addEventListener('companyDataUpdated', handleDataUpdate);
-    
+
     return () => {
       window.removeEventListener('facebookDataUpdated', handleDataUpdate);
       window.removeEventListener('companyDataUpdated', handleDataUpdate);
@@ -249,6 +345,7 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
       currentView={currentView}
       onViewChange={setCurrentView}
       user={user}
+      userName={userName}
       onLogout={handleLogout}
     >
       {currentView === "assigned" && <AssignedDataView userId={user.id} userRole="employee" />}

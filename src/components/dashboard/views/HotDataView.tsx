@@ -236,7 +236,7 @@ const HotDataView = ({ userId, userRole }: HotDataViewProps) => {
   const fetchHotData = async () => {
     setLoading(true);
     
-    // First get all companies assigned to the user
+    // Optimized: Fetch companies with comments, limit to prevent slow queries
     const { data: userCompanies, error: companiesError } = await supabase
       .from("companies")
       .select(`
@@ -256,23 +256,27 @@ const HotDataView = ({ userId, userRole }: HotDataViewProps) => {
       `)
       .eq("assigned_to_id", userId)
       .is("deleted_at", null)
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: true })
+      .limit(200); // Limit to prevent slow queries
 
     if (!companiesError && userCompanies) {
+      // Filter out companies with deletion_state
+      const activeCompanies = userCompanies.filter((company: any) => !company.deletion_state);
+      
       // Filter companies where the latest comment has "hot" category
-      const hotCompanies = userCompanies.filter(company => {
+      // Optimize: Only check latest comment instead of sorting all
+      const hotCompanies = activeCompanies.filter((company: any) => {
         if (!company.comments || company.comments.length === 0) return false;
-        // Sort comments by created_at descending and get the latest
-        const sortedComments = [...company.comments].sort((a: any, b: any) => 
-          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        );
-        const latestComment = sortedComments[0];
-        // Ensure we have a valid category and it matches hot
+        // Find latest comment without full sort
+        const latestComment = company.comments.reduce((latest: any, current: any) => {
+          if (!latest) return current;
+          return new Date(current.created_at) > new Date(latest.created_at) ? current : latest;
+        }, null);
         return latestComment && latestComment.category === "hot";
       });
       
-      // Ensure comments are properly sorted for each company
-      const companiesWithSortedComments = hotCompanies.map(company => ({
+      // Sort comments only for companies that passed filter (smaller set)
+      const companiesWithSortedComments = hotCompanies.map((company: any) => ({
         ...company,
         comments: company.comments?.sort((a: any, b: any) => 
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
@@ -331,7 +335,11 @@ const HotDataView = ({ userId, userRole }: HotDataViewProps) => {
             }));
             
             // Filter Facebook data with hot category
+            // Exclude items with deletion_state set (they're in inactive or recycle bins)
             const hotFbData = fbWithComments.filter((fb: any) => {
+              // Exclude items with deletion_state set
+              if (fb.deletion_state) return false;
+              
               if (!fb.comments || fb.comments.length === 0) return false;
               const latestComment = fb.comments[0];
               return latestComment && latestComment.category === "hot";
@@ -371,7 +379,11 @@ const HotDataView = ({ userId, userRole }: HotDataViewProps) => {
               .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
           }));
           
+          // Exclude items with deletion_state set (they're in inactive or recycle bins)
           const hotFbData = fbWithComments.filter((fb: any) => {
+            // Exclude items with deletion_state set
+            if (fb.deletion_state) return false;
+            
             if (!fb.comments || fb.comments.length === 0) return false;
             const latestComment = fb.comments[0];
             return latestComment && latestComment.category === "hot";

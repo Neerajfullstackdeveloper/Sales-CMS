@@ -2,51 +2,190 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { User } from "@supabase/supabase-js";
-import { Loader2 } from "lucide-react";
+import { Loader2, CheckCircle } from "lucide-react";
 import EmployeeDashboard from "@/components/dashboard/EmployeeDashboard";
 import TeamLeadDashboard from "@/components/dashboard/TeamLeadDashboard";
 import AdminDashboard from "@/components/dashboard/AdminDashboard";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState<User | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showWelcomeDialog, setShowWelcomeDialog] = useState(false);
+  const [userName, setUserName] = useState<string>("");
+  const [hasShownWelcome, setHasShownWelcome] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   useEffect(() => {
     const checkAuth = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       
       if (!user) {
+        sessionStorage.removeItem("dashboard_auth");
         navigate("/auth");
         return;
       }
 
       setUser(user);
+      setUserName(user.email?.split("@")[0] || "User"); // Set default name immediately
 
-      // Get user role
-      const { data: roleData } = await supabase
+      // ALWAYS fetch role from database (critical - don't trust cache for role)
+      const roleResult = await supabase
         .from("user_roles")
         .select("role")
         .eq("user_id", user.id)
         .single();
 
-      setUserRole(roleData?.role || null);
-      setLoading(false);
+      const roleData = roleResult.data;
+      const currentRole = roleData?.role || null;
+      
+      // Check if cached role differs from database role (for debugging)
+      const cachedAuth = sessionStorage.getItem("dashboard_auth");
+      let cachedRole = null;
+      if (cachedAuth) {
+        try {
+          const parsed = JSON.parse(cachedAuth);
+          cachedRole = parsed.role;
+          // Log if role changed (for debugging)
+          if (cachedRole !== currentRole) {
+            console.log(`Role changed: ${cachedRole} -> ${currentRole}. Updating dashboard.`);
+          }
+        } catch {}
+      }
+
+      // Always use the role from database, not cache (critical fix)
+      setUserRole(currentRole);
+      setLoading(false); // Render dashboard immediately after getting role
+      setIsInitialized(true);
+
+      // Update cache with verified role from database
+      sessionStorage.setItem("dashboard_auth", JSON.stringify({
+        user: { id: user.id, email: user.email },
+        role: currentRole, // Always use database role
+        name: user.email?.split("@")[0] || "User"
+      }));
+
+      // Fetch profile asynchronously (non-blocking)
+      supabase
+        .from("profiles")
+        .select("display_name")
+        .eq("id", user.id)
+        .single()
+        .then(({ data: profile }) => {
+          if (profile?.display_name) {
+            setUserName(profile.display_name);
+            // Update cache with display name
+            const cached = sessionStorage.getItem("dashboard_auth");
+            if (cached) {
+              try {
+                const parsed = JSON.parse(cached);
+                parsed.name = profile.display_name;
+                sessionStorage.setItem("dashboard_auth", JSON.stringify(parsed));
+              } catch {}
+            }
+          }
+        })
+        .catch(() => {
+          // Ignore profile fetch errors, use default name
+        });
+
+      // Show welcome dialog on first load (check session storage to avoid showing on refresh)
+      const hasSeenWelcome = sessionStorage.getItem("hasSeenWelcome");
+      if (!hasSeenWelcome && currentRole) {
+        // Delay dialog slightly to let dashboard render first
+        setTimeout(() => {
+          setShowWelcomeDialog(true);
+          sessionStorage.setItem("hasSeenWelcome", "true");
+        }, 100);
+      }
     };
 
     checkAuth();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!session) {
+        sessionStorage.removeItem("dashboard_auth");
+        sessionStorage.removeItem("hasSeenWelcome");
         navigate("/auth");
-      } else {
+      } else if (_event === "SIGNED_IN" || _event === "TOKEN_REFRESHED") {
+        // Only update on actual sign in or token refresh, not on every state change
         setUser(session.user);
+        setUserName(session.user.email?.split("@")[0] || "User");
+        
+        // Fetch role and profile in parallel (non-blocking)
+        Promise.all([
+          supabase
+            .from("user_roles")
+            .select("role")
+            .eq("user_id", session.user.id)
+            .single(),
+          supabase
+            .from("profiles")
+            .select("display_name")
+            .eq("id", session.user.id)
+            .single()
+        ]).then(([roleResult, profileResult]) => {
+          const roleData = roleResult.data;
+          const profile = profileResult.data;
+          const currentRole = roleData?.role || null;
+
+          // Always update role from database
+          if (currentRole) {
+            setUserRole(currentRole);
+            // Update cache with verified role
+            sessionStorage.setItem("dashboard_auth", JSON.stringify({
+              user: { id: session.user.id, email: session.user.email },
+              role: currentRole, // Always use database role
+              name: profile?.display_name || session.user.email?.split("@")[0] || "User"
+            }));
+          } else {
+            // If no role found, clear cache and show error
+            setUserRole(null);
+            sessionStorage.removeItem("dashboard_auth");
+          }
+
+          if (profile?.display_name) {
+            setUserName(profile.display_name);
+          }
+
+          // Show welcome dialog on login (not on refresh)
+          if (_event === "SIGNED_IN" && currentRole && !sessionStorage.getItem("hasSeenWelcome")) {
+            setShowWelcomeDialog(true);
+            sessionStorage.setItem("hasSeenWelcome", "true");
+          }
+        });
       }
     });
 
-    return () => subscription.unsubscribe();
-  }, [navigate]);
+    // Handle visibility change (tab switch) - don't reload everything
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && isInitialized) {
+        // Just verify auth, don't reload everything
+        supabase.auth.getUser().then(({ data: { user: currentUser } }) => {
+          if (!currentUser) {
+            sessionStorage.removeItem("dashboard_auth");
+            navigate("/auth");
+          }
+        });
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      subscription.unsubscribe();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [navigate, isInitialized]);
 
   if (loading) {
     return (
@@ -67,8 +206,47 @@ const Dashboard = () => {
     );
   }
 
+  const getRoleDisplayName = (role: string | null) => {
+    switch (role) {
+      case "admin":
+        return "Admin";
+      case "team_lead":
+        return "Team Lead";
+      case "employee":
+        return "Employee";
+      default:
+        return "User";
+    }
+  };
+
   return (
     <>
+      <Dialog open={showWelcomeDialog} onOpenChange={setShowWelcomeDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="flex items-center justify-center w-12 h-12 rounded-full bg-green-100 dark:bg-green-900">
+                <CheckCircle className="h-6 w-6 text-green-600 dark:text-green-400" />
+              </div>
+              <DialogTitle className="text-2xl">Welcome Back!</DialogTitle>
+            </div>
+            <DialogDescription className="text-base pt-2">
+              <p className="font-semibold text-foreground mb-1">
+                {userName}
+              </p>
+              <p className="text-muted-foreground">
+                Logged in as <span className="font-medium">{getRoleDisplayName(userRole)}</span>
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end mt-4">
+            <Button onClick={() => setShowWelcomeDialog(false)}>
+              Get Started
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {userRole === "admin" && <AdminDashboard user={user!} />}
       {userRole === "team_lead" && <TeamLeadDashboard user={user!} />}
       {userRole === "employee" && <EmployeeDashboard user={user!} />}

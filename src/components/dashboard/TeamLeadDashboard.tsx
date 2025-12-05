@@ -49,6 +49,7 @@ const TeamLeadDashboard = ({ user }: TeamLeadDashboardProps) => {
     email: string;
   } | null>(null);
   const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
+  const [userName, setUserName] = useState<string>("");
 
   const fetchCategoryCounts = async () => {
     try {
@@ -147,9 +148,33 @@ const TeamLeadDashboard = ({ user }: TeamLeadDashboardProps) => {
   };
 
   useEffect(() => {
+    let isMounted = true;
+    let intervalId: NodeJS.Timeout | null = null;
+    
+    // Load counts asynchronously without blocking render
     fetchCategoryCounts();
-    const interval = setInterval(fetchCategoryCounts, 30000); // Every 30 seconds
-    return () => clearInterval(interval);
+    
+    // Refresh counts periodically (only when tab is visible)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && isMounted) {
+        fetchCategoryCounts();
+      }
+    };
+    
+    // Refresh counts every 30 seconds when visible
+    intervalId = setInterval(() => {
+      if (document.visibilityState === "visible" && isMounted) {
+        fetchCategoryCounts();
+      }
+    }, 30000);
+    
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    
+    return () => {
+      isMounted = false;
+      if (intervalId) clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user.id]);
 
@@ -165,6 +190,25 @@ const TeamLeadDashboard = ({ user }: TeamLeadDashboardProps) => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Fetch user's display name
+  useEffect(() => {
+    const fetchUserName = async () => {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("display_name")
+        .eq("id", user.id)
+        .single();
+      
+      if (profile?.display_name) {
+        setUserName(profile.display_name);
+      } else {
+        setUserName(user.email?.split("@")[0] || "Team Lead");
+      }
+    };
+    
+    fetchUserName();
+  }, [user.id, user.email]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -277,6 +321,7 @@ const TeamLeadDashboard = ({ user }: TeamLeadDashboardProps) => {
       currentView={currentView}
       onViewChange={setCurrentView}
       user={user}
+      userName={userName}
       onLogout={handleLogout}
     >
       {currentView === "assigned" && <AssignedDataView userId={user.id} userRole="team_lead" />}
@@ -293,7 +338,7 @@ const TeamLeadDashboard = ({ user }: TeamLeadDashboardProps) => {
         <TeamLeadEmployeeView teamLeadId={user.id} onLoginAsUser={handleLoginAsUser} />
       )}
       {currentView === "overview" && <EmployeeDataOverviewView userId={user.id} />}
-      {currentView === "recycle" && <RecycleBinView userRole="team_lead" />}
+      {currentView === "recycle" && <RecycleBinView userRole="team_lead" userId={user.id} />}
     </DashboardLayout>
   );
 };

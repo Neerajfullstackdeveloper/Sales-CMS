@@ -45,6 +45,7 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
   const navigate = useNavigate();
   const [currentView, setCurrentView] = useState("companies");
   const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
+  const [userName, setUserName] = useState<string>("");
   const [impersonatedUser, setImpersonatedUser] = useState<{
     id: string;
     role: "employee" | "team_lead";
@@ -60,66 +61,113 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
 
   const fetchCategoryCounts = async () => {
     try {
-      const counts: Record<string, number> = {};
-
-      // Fetch All Companies count (not deleted)
-      const { count: companiesCount } = await supabase
-        .from("companies")
-        .select("*", { count: "exact", head: true })
-        .is("deleted_at", null);
-      counts.companies = companiesCount || 0;
-
-      // Fetch Facebook Data count
-      const { count: facebookCount } = await (supabase
-        .from("facebook_data" as any)
-        .select("*", { count: "exact", head: true }) as any);
-      counts.facebook = facebookCount || 0;
-
-      // Fetch pending Data Requests count
-      const { count: dataRequestsCount } = await supabase
-        .from("data_requests")
-        .select("*", { count: "exact", head: true });
-      counts.requests = dataRequestsCount || 0;
-
-      // Fetch pending Edit Requests count
-      const { count: editRequestsCount } = await (supabase
-        .from("facebook_data_edit_requests" as any)
-        .select("*", { count: "exact", head: true })
-        .eq("status", "pending") as any);
-      counts["edit-requests"] = editRequestsCount || 0;
-
-      // Fetch Recycle Bin count (deleted companies)
-      const { count: recycleCount } = await supabase
-        .from("companies")
-        .select("*", { count: "exact", head: true })
-        .not("deleted_at", "is", null);
-      counts.recycle = recycleCount || 0;
-
-      // Fetch pending company approvals count
-      try {
-        const { count: approvalCount } = await (supabase
+      // Fetch all counts in parallel for faster loading
+      const [
+        companiesResult,
+        facebookResult,
+        dataRequestsResult,
+        editRequestsResult,
+        recycleResult,
+        approvalsResult
+      ] = await Promise.all([
+        supabase
+          .from("companies")
+          .select("*", { count: "exact", head: true })
+          .is("deleted_at", null),
+        supabase
+          .from("facebook_data" as any)
+          .select("*", { count: "exact", head: true }) as any,
+        supabase
+          .from("data_requests")
+          .select("*", { count: "exact", head: true }),
+        supabase
+          .from("facebook_data_edit_requests" as any)
+          .select("*", { count: "exact", head: true })
+          .eq("status", "pending") as any,
+        supabase
+          .from("companies")
+          .select("*", { count: "exact", head: true })
+          .not("deleted_at", "is", null),
+        supabase
           .from("companies" as any)
           .select("*", { count: "exact", head: true })
           .eq("approval_status", "pending")
-          .is("deleted_at", null) as any);
-        counts["approvals"] = approvalCount || 0;
-      } catch (err) {
-        counts["approvals"] = 0;
-      }
+          .is("deleted_at", null) as any
+      ]);
+
+      const counts: Record<string, number> = {
+        companies: companiesResult.count || 0,
+        facebook: facebookResult.count || 0,
+        requests: dataRequestsResult.count || 0,
+        "edit-requests": editRequestsResult.count || 0,
+        recycle: recycleResult.count || 0,
+        approvals: approvalsResult.count || 0,
+      };
 
       setCategoryCounts(counts);
     } catch (error) {
       console.error("Error fetching category counts:", error);
+      // Set defaults on error so dashboard still renders
+      setCategoryCounts({
+        companies: 0,
+        facebook: 0,
+        requests: 0,
+        "edit-requests": 0,
+        recycle: 0,
+        approvals: 0,
+      });
     }
   };
 
   useEffect(() => {
+    let isMounted = true;
+    let intervalId: NodeJS.Timeout | null = null;
+    
+    // Load counts asynchronously without blocking render
     fetchCategoryCounts();
-    // Refresh counts periodically
-    const interval = setInterval(fetchCategoryCounts, 30000); // Every 30 seconds
-    return () => clearInterval(interval);
+    
+    // Refresh counts periodically (only when tab is visible)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && isMounted) {
+        fetchCategoryCounts();
+      }
+    };
+    
+    // Refresh counts every 30 seconds when visible
+    intervalId = setInterval(() => {
+      if (document.visibilityState === "visible" && isMounted) {
+        fetchCategoryCounts();
+      }
+    }, 30000);
+    
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    
+    return () => {
+      isMounted = false;
+      if (intervalId) clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Fetch user's display name
+  useEffect(() => {
+    const fetchUserName = async () => {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("display_name")
+        .eq("id", user.id)
+        .single();
+      
+      if (profile?.display_name) {
+        setUserName(profile.display_name);
+      } else {
+        setUserName(user.email?.split("@")[0] || "Admin");
+      }
+    };
+    
+    fetchUserName();
+  }, [user.id, user.email]);
 
   // Listen for data update events
   useEffect(() => {
@@ -246,6 +294,7 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
       currentView={currentView}
       onViewChange={setCurrentView}
       user={user}
+      userName={userName}
       onLogout={handleLogout}
     >
       {currentView === "companies" && <AllCompaniesView userRole="admin" />}

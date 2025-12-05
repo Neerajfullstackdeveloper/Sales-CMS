@@ -70,6 +70,17 @@ const BlockDataView = ({ userId, userRole }: BlockDataViewProps) => {
       fetchApprovedEditRequests();
       fetchShareIdMap();
     }
+    
+    // Listen for data update events to refresh the view when data is deleted
+    const handleDataUpdate = () => {
+      fetchBlockData();
+    };
+    
+    window.addEventListener('companyDataUpdated', handleDataUpdate);
+    
+    return () => {
+      window.removeEventListener('companyDataUpdated', handleDataUpdate);
+    };
   }, [userId, userRole]);
 
   const fetchApprovedEditRequests = async () => {
@@ -192,41 +203,156 @@ const BlockDataView = ({ userId, userRole }: BlockDataViewProps) => {
 
 
   const handleDelete = async (fb: any) => {
-    if (!confirm("Are you sure you want to delete this Facebook data?")) return;
+    if (!confirm("Are you sure you want to delete this Facebook data? It will be moved to your team lead's recycle bin.")) return;
 
     try {
       const { data: userData } = await supabase.auth.getUser();
 
-      if (userRole !== "admin") {
-        const { error: commentError } = await (supabase
-          .from("facebook_data_comments" as any)
-          .insert([{
-            facebook_data_id: fb.id,
-            user_id: userData.user?.id,
-            comment_text: "Moved to Inactive by employee",
-            category: "block",
-            comment_date: new Date().toISOString().slice(0, 10),
-          }]) as any);
+      if (!userData.user) {
+        throw new Error("Not authenticated");
+      }
 
-        if (commentError) {
-          console.error("Error moving Facebook data to inactive via comment:", commentError);
-          throw commentError;
+      // Check if Facebook data is already in inactive section (has deletion_state='inactive')
+      const isInInactive = fb.deletion_state === 'inactive' || 
+        (fb.comments && fb.comments.length > 0 && 
+         fb.comments[fb.comments.length - 1]?.category === "block");
+
+      // For employees deleting from inactive section → move to team lead recycle (or admin if no team)
+      if (userRole === "employee" && isInInactive) {
+        let deletionState: 'team_lead_recycle' | 'admin_recycle' = 'admin_recycle';
+        let successMessage = "Facebook data moved to Admin's recycle bin";
+
+        // Try to get team lead ID for this employee
+        // Step 1: Get team_id from team_members
+        const { data: teamMemberData, error: teamMemberError } = await (supabase
+          .from("team_members" as any)
+          .select("team_id")
+          .eq("employee_id", userData.user.id)
+          .maybeSingle() as any);
+
+        if (!teamMemberError && teamMemberData && teamMemberData.team_id) {
+          // Step 2: Get team_lead_id from teams table
+          const { data: teamData, error: teamError } = await (supabase
+            .from("teams" as any)
+            .select("team_lead_id")
+            .eq("id", teamMemberData.team_id)
+            .maybeSingle() as any);
+
+          if (!teamError && teamData && teamData.team_lead_id) {
+            // Employee has a team lead, move to team lead recycle
+            deletionState = 'team_lead_recycle';
+            successMessage = "Facebook data moved to Team Lead's recycle bin";
+          }
         }
 
-        toast.success("Facebook data moved to Inactive section");
+        // If no team lead found, it will go to admin_recycle (default)
+
+        // Update deletion_state to move to recycle bin
+        const { error: updateError } = await (supabase
+          .from("facebook_data" as any)
+          .update({
+            deletion_state: deletionState as any,
+            deleted_at: new Date().toISOString(),
+            deleted_by_id: userData.user.id
+          })
+          .eq("id", fb.id) as any);
+
+        if (updateError) {
+          console.error("Error moving to recycle bin:", updateError);
+          
+          // Check if columns don't exist (migration not run)
+          if (updateError.message?.includes("deleted_at") || 
+              updateError.message?.includes("deletion_state") ||
+              updateError.message?.includes("deleted_by_id") ||
+              updateError.code === "PGRST204") {
+            toast.error(
+              "Database migration not applied. Please run the migration: 20250120000003_add_deletion_state_to_facebook_data.sql in Supabase SQL Editor.",
+              { duration: 10000 }
+            );
+            console.error("Migration required. Run: supabase/migrations/20250120000003_add_deletion_state_to_facebook_data.sql");
+            return;
+          }
+          
+          throw updateError;
+        }
+
+        toast.success(successMessage);
+        
+        // Dispatch event to refresh recycle bin if team lead is viewing it
+        window.dispatchEvent(new CustomEvent('facebookDataUpdated'));
+        
+        // Refresh the inactive view (which will now exclude this item)
         fetchBlockData();
         return;
       }
 
-      const { error } = await (supabase
-        .from("facebook_data" as any)
-        .delete()
-        .eq("id", fb.id) as any);
+      // For team leads deleting from recycle bin → move to admin recycle
+      if (userRole === "team_lead" && fb.deletion_state === 'team_lead_recycle') {
+        const { error: updateError } = await (supabase
+          .from("facebook_data" as any)
+          .update({
+            deletion_state: 'admin_recycle' as any,
+            deleted_at: new Date().toISOString(),
+            deleted_by_id: userData.user.id
+          })
+          .eq("id", fb.id) as any);
 
-      if (error) throw error;
-      
-      toast.success("Facebook data deleted successfully");
-      fetchBlockData();
+        if (updateError) {
+          console.error("Error moving to admin recycle:", updateError);
+          
+          // Check if columns don't exist (migration not run)
+          if (updateError.message?.includes("deleted_at") || 
+              updateError.message?.includes("deletion_state") ||
+              updateError.message?.includes("deleted_by_id") ||
+              updateError.code === "PGRST204") {
+            toast.error(
+              "Database migration not applied. Please run the migration: 20250120000003_add_deletion_state_to_facebook_data.sql in Supabase SQL Editor.",
+              { duration: 10000 }
+            );
+            return;
+          }
+          
+          throw updateError;
+        }
+
+        toast.success("Facebook data moved to Admin's recycle bin");
+        fetchBlockData();
+        return;
+      }
+
+      // For admins deleting from recycle bin → permanent delete
+      if (userRole === "admin" && fb.deletion_state === 'admin_recycle') {
+        if (!confirm("Are you sure you want to permanently delete this Facebook data? This action cannot be undone.")) {
+          return;
+        }
+
+        const { error } = await (supabase
+          .from("facebook_data" as any)
+          .delete()
+          .eq("id", fb.id) as any);
+
+        if (error) throw error;
+
+        toast.success("Facebook data permanently deleted!");
+        fetchBlockData();
+        return;
+      }
+
+      // Default admin behavior: hard delete
+      if (userRole === "admin") {
+        const { error } = await (supabase
+          .from("facebook_data" as any)
+          .delete()
+          .eq("id", fb.id) as any);
+
+        if (error) throw error;
+        
+        toast.success("Facebook data deleted successfully");
+        fetchBlockData();
+        return;
+      }
+
+      toast.error("Unable to delete Facebook data. Invalid state.");
     } catch (error: any) {
       console.error("Error deleting Facebook data:", error);
       toast.error(error.message || "Failed to delete Facebook data");
@@ -236,7 +362,7 @@ const BlockDataView = ({ userId, userRole }: BlockDataViewProps) => {
   const fetchBlockData = async () => {
     setLoading(true);
     
-    // First get all companies assigned to the user
+    // Optimized: Fetch companies with comments, limit to prevent slow queries
     const { data: userCompanies, error: companiesError } = await supabase
       .from("companies")
       .select(`
@@ -256,17 +382,40 @@ const BlockDataView = ({ userId, userRole }: BlockDataViewProps) => {
       `)
       .eq("assigned_to_id", userId)
       .is("deleted_at", null)
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: true })
+      .limit(200); // Limit to prevent slow queries
 
     if (!companiesError && userCompanies) {
-      // Filter companies where the latest comment has "block" category
-      const blockCompanies = userCompanies.filter(company => {
+      // Filter companies where:
+      // 1. deletion_state is 'inactive', OR
+      // 2. latest comment has "block" category AND deletion_state is NULL (not deleted)
+      // Exclude companies that have been moved to recycle bins (deletion_state is 'team_lead_recycle' or 'admin_recycle')
+      const blockCompanies = userCompanies.filter((company: any) => {
+        const deletionState = (company as any).deletion_state;
+        
+        // CRITICAL: Exclude companies moved to recycle bins
+        if (deletionState === 'team_lead_recycle' || deletionState === 'admin_recycle') {
+          return false;
+        }
+        
+        // Also exclude if deleted_at is set (double check - should be caught by query but just in case)
+        if (company.deleted_at) {
+          return false;
+        }
+        
+        // If deletion_state is 'inactive', show it
+        if (deletionState === 'inactive') return true;
+        
+        // If deletion_state is set to anything else, don't show
+        if (deletionState) return false;
+        
+        // Otherwise, check if latest comment is 'block'
         if (!company.comments || company.comments.length === 0) return false;
-        // Sort comments by created_at descending and get the latest
-        const sortedComments = [...company.comments].sort((a: any, b: any) => 
-          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        );
-        const latestComment = sortedComments[0];
+        // Find latest comment without full sort (optimization)
+        const latestComment = company.comments.reduce((latest: any, current: any) => {
+          if (!latest) return current;
+          return new Date(current.created_at) > new Date(latest.created_at) ? current : latest;
+        }, null);
         // Ensure we have a valid category and it matches block
         return latestComment && latestComment.category === "block";
       });
@@ -299,6 +448,7 @@ const BlockDataView = ({ userId, userRole }: BlockDataViewProps) => {
           }
         });
         
+        // Fetch Facebook data, including deletion_state column
         const { data: fbData } = await (supabase
           .from("facebook_data" as any)
           .select("*")
@@ -328,8 +478,20 @@ const BlockDataView = ({ userId, userRole }: BlockDataViewProps) => {
             }));
             
             const blockFbData = fbWithComments.filter((fb: any) => {
+              // CRITICAL: Exclude items moved to recycle bins (they should not appear in inactive)
+              if (fb.deletion_state === 'team_lead_recycle' || fb.deletion_state === 'admin_recycle') {
+                return false;
+              }
+              
+              // Show items with deletion_state='inactive' (but not in recycle bins)
+              if (fb.deletion_state === 'inactive') return true;
+              
+              // Also show items with block comment category (for backward compatibility)
+              // But only if deletion_state is NULL or not set (not in recycle)
+              if (fb.deletion_state) return false; // If deletion_state is set to anything else, don't show
+              
               if (!fb.comments || fb.comments.length === 0) return false;
-              const latestComment = fb.comments[0];
+              const latestComment = fb.comments[fb.comments.length - 1]; // Get the last comment (most recent)
               return latestComment && latestComment.category === "block";
             });
             
@@ -367,8 +529,20 @@ const BlockDataView = ({ userId, userRole }: BlockDataViewProps) => {
           }));
           
           const blockFbData = fbWithComments.filter((fb: any) => {
+            // CRITICAL: Exclude items moved to recycle bins (they should not appear in inactive)
+            if (fb.deletion_state === 'team_lead_recycle' || fb.deletion_state === 'admin_recycle') {
+              return false;
+            }
+            
+            // Show items with deletion_state='inactive' (but not in recycle bins)
+            if (fb.deletion_state === 'inactive') return true;
+            
+            // Also show items with block comment category (for backward compatibility)
+            // But only if deletion_state is NULL or not set (not in recycle)
+            if (fb.deletion_state) return false; // If deletion_state is set to anything else, don't show
+            
             if (!fb.comments || fb.comments.length === 0) return false;
-            const latestComment = fb.comments[0];
+            const latestComment = fb.comments[fb.comments.length - 1]; // Get the last comment (most recent)
             return latestComment && latestComment.category === "block";
           });
           

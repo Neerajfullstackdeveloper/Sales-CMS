@@ -197,12 +197,17 @@ const TodayDataView = ({ userId, userRole }: TodayDataViewProps) => {
     try {
       const { data: userData } = await supabase.auth.getUser();
 
+      if (!userData.user) {
+        throw new Error("Not authenticated");
+      }
+
       if (userRole !== "admin") {
+        // Add block comment
         const { error: commentError } = await (supabase
           .from("facebook_data_comments" as any)
           .insert([{
             facebook_data_id: fb.id,
-            user_id: userData.user?.id,
+            user_id: userData.user.id,
             comment_text: "Moved to Inactive by employee",
             category: "block",
             comment_date: new Date().toISOString().slice(0, 10),
@@ -211,6 +216,21 @@ const TodayDataView = ({ userId, userRole }: TodayDataViewProps) => {
         if (commentError) {
           console.error("Error moving Facebook data to inactive via comment:", commentError);
           throw commentError;
+        }
+
+        // Set deletion_state to 'inactive'
+        const { error: updateError } = await (supabase
+          .from("facebook_data" as any)
+          .update({
+            deletion_state: 'inactive' as any,
+            deleted_at: new Date().toISOString(),
+            deleted_by_id: userData.user.id
+          })
+          .eq("id", fb.id) as any);
+
+        if (updateError) {
+          console.error("Error setting deletion_state:", updateError);
+          // Continue even if update fails - the comment was added
         }
 
         toast.success("Facebook data moved to Inactive section");
@@ -237,7 +257,7 @@ const TodayDataView = ({ userId, userRole }: TodayDataViewProps) => {
     setLoading(true);
     const today = new Date().toISOString().split('T')[0];
     
-    // First get all companies assigned to the user with their comments
+    // Optimized: Fetch companies with comments, limit to prevent slow queries
     const { data: userCompanies, error: companiesError } = await supabase
       .from("companies")
       .select(`
@@ -257,11 +277,32 @@ const TodayDataView = ({ userId, userRole }: TodayDataViewProps) => {
       `)
       .eq("assigned_to_id", userId)
       .is("deleted_at", null)
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: true })
+      .limit(200); // Limit to prevent slow queries
 
     if (!companiesError && userCompanies) {
+      // Filter out companies with deletion_state (inactive, recycle bins)
+      // Also exclude companies that have been moved to inactive (latest comment is 'block')
+      const activeCompanies = userCompanies.filter((company: any) => {
+        // Exclude companies with deletion_state set (inactive or recycle bins)
+        if (company.deletion_state) return false;
+        
+        // Exclude companies where latest comment is 'block' category (moved to inactive)
+        if (company.comments && company.comments.length > 0) {
+          const sortedComments = [...company.comments].sort((a: any, b: any) => 
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          );
+          const latestComment = sortedComments[0];
+          if (latestComment && latestComment.category === 'block') {
+            return false; // Exclude - it's in inactive section
+          }
+        }
+        
+        return true;
+      });
+      
       // Filter companies that have comments from today
-      const todayCompanies = userCompanies.filter(company => {
+      const todayCompanies = activeCompanies.filter((company: any) => {
         if (!company.comments || company.comments.length === 0) return false;
         return company.comments.some((comment: any) => 
           comment.created_at.startsWith(today)
@@ -324,8 +365,20 @@ const TodayDataView = ({ userId, userRole }: TodayDataViewProps) => {
                 .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
             }));
             
+            // Exclude items with deletion_state set (they're in inactive or recycle bins)
+            // Also exclude items where latest comment is 'block' category (moved to inactive)
             const todayFbData = fbWithComments.filter((fb: any) => {
+              // Exclude items with deletion_state set (inactive or recycle bins)
+              if (fb.deletion_state) return false;
+              
               if (!fb.comments || fb.comments.length === 0) return false;
+              
+              // Exclude items where latest comment is 'block' category (moved to inactive)
+              const latestComment = fb.comments[fb.comments.length - 1]; // Comments are sorted ascending
+              if (latestComment && latestComment.category === 'block') {
+                return false; // Exclude - it's in inactive section
+              }
+              
               return fb.comments.some((comment: any) => comment.created_at.startsWith(today));
             });
             
@@ -362,8 +415,20 @@ const TodayDataView = ({ userId, userRole }: TodayDataViewProps) => {
               .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
           }));
           
+          // Exclude items with deletion_state set (they're in inactive or recycle bins)
+          // Also exclude items where latest comment is 'block' category (moved to inactive)
           const todayFbData = fbWithComments.filter((fb: any) => {
+            // Exclude items with deletion_state set (inactive or recycle bins)
+            if (fb.deletion_state) return false;
+            
             if (!fb.comments || fb.comments.length === 0) return false;
+            
+            // Exclude items where latest comment is 'block' category (moved to inactive)
+            const latestComment = fb.comments[fb.comments.length - 1]; // Comments are sorted ascending
+            if (latestComment && latestComment.category === 'block') {
+              return false; // Exclude - it's in inactive section
+            }
+            
             return fb.comments.some((comment: any) => comment.created_at.startsWith(today));
           });
           

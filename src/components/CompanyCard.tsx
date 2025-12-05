@@ -190,18 +190,124 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
   const handleDelete = async () => {
     try {
       const { data: userData } = await supabase.auth.getUser();
+      if (!userData.user) return;
 
-      // For employees, "delete" should move the company to Inactive (block) category,
-      // not actually delete the record.
-      if (userRole !== "admin") {
+      // Check if company is already in inactive section (has deletion_state='inactive' or latest comment is 'block')
+      const isInInactive = company.deletion_state === 'inactive' || 
+        (lastComment && lastComment.category === 'block');
+
+      // For employees deleting from inactive section → move to team lead recycle (or admin if no team)
+      if (userRole === "employee" && isInInactive) {
+        let deletionState: 'team_lead_recycle' | 'admin_recycle' = 'admin_recycle';
+        let successMessage = "Company moved to Admin's recycle bin";
+
+        // Try to get team lead ID for this employee
+        // Step 1: Get team_id from team_members
+        const { data: teamMemberData, error: teamMemberError } = await (supabase
+          .from("team_members" as any)
+          .select("team_id")
+          .eq("employee_id", userData.user.id)
+          .maybeSingle() as any);
+
+        if (!teamMemberError && teamMemberData && teamMemberData.team_id) {
+          // Step 2: Get team_lead_id from teams table
+          const { data: teamData, error: teamError } = await (supabase
+            .from("teams" as any)
+            .select("team_lead_id")
+            .eq("id", teamMemberData.team_id)
+            .maybeSingle() as any);
+
+          if (!teamError && teamData && teamData.team_lead_id) {
+            // Employee has a team lead, move to team lead recycle
+            deletionState = 'team_lead_recycle';
+            successMessage = "Company moved to Team Lead's recycle bin";
+          }
+        }
+
+        // If no team lead found, it will go to admin_recycle (default)
+        const { error } = await (supabase
+          .from("companies")
+          .update({
+            deletion_state: deletionState as any,
+            deleted_at: new Date().toISOString(),
+            deleted_by_id: userData.user.id
+          } as any)
+          .eq("id", company.id)
+          .select() as any);
+
+        if (error) {
+          console.error("Error moving to recycle bin:", error);
+          // Fallback if deletion_state column doesn't exist
+          if (error.message?.includes("deletion_state")) {
+            const { error: fallbackError } = await supabase
+              .from("companies")
+              .update({
+                deleted_at: new Date().toISOString(),
+                deleted_by_id: userData.user.id
+              })
+              .eq("id", company.id);
+            
+            if (fallbackError) {
+              console.error("Fallback update error:", fallbackError);
+              throw fallbackError;
+            }
+          } else {
+            throw error;
+          }
+        }
+
+        // Dispatch event to refresh all views
+        window.dispatchEvent(new CustomEvent('companyDataUpdated'));
+        
+        toast.success(successMessage);
+        onUpdate();
+        return;
+      }
+
+      // For team leads deleting from recycle bin → move to admin recycle
+      if (userRole === "team_lead" && company.deletion_state === 'team_lead_recycle') {
+        const { error } = await (supabase
+          .from("companies")
+          .update({
+            deletion_state: 'admin_recycle' as any,
+            deleted_at: new Date().toISOString(),
+            deleted_by_id: userData.user.id
+          } as any)
+          .eq("id", company.id) as any);
+
+        if (error) {
+          // Fallback if deletion_state column doesn't exist
+          if (error.message?.includes("deletion_state")) {
+            const { error: fallbackError } = await supabase
+              .from("companies")
+              .update({
+                deleted_at: new Date().toISOString(),
+                deleted_by_id: userData.user.id
+              })
+              .eq("id", company.id);
+            
+            if (fallbackError) throw fallbackError;
+          } else {
+            throw error;
+          }
+        }
+
+        toast.success("Company moved to Admin's recycle bin");
+        onUpdate();
+        return;
+      }
+
+      // For employees deleting from regular view → move to inactive section
+      if (userRole === "employee" && !isInInactive) {
         const commentCategory = "block" as "block";
 
+        // First add block comment
         const { error: commentError } = await supabase
           .from("comments")
           .insert([
             {
               company_id: company.id,
-              user_id: userData.user?.id,
+              user_id: userData.user.id,
               comment_text: "Moved to Inactive by employee",
               category: commentCategory,
               comment_date: new Date().toISOString().slice(0, 10),
@@ -213,37 +319,86 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
           throw commentError;
         }
 
+        // Set deletion_state to inactive
+        const { error: stateError } = await (supabase
+          .from("companies")
+          .update({
+            deletion_state: 'inactive' as any
+          } as any)
+          .eq("id", company.id) as any);
+
+        // Ignore error if column doesn't exist (migration not run)
+        if (stateError && !stateError.message?.includes("deletion_state")) {
+          console.warn("Could not set deletion_state:", stateError);
+        }
+
         toast.success("Company moved to Inactive section");
         onUpdate();
         return;
       }
 
-      // Admins keep the existing delete / recycle-bin behavior
-      const { error } = await supabase
-        .from("companies")
-        .update({
-          deleted_at: new Date().toISOString(),
-          deleted_by_id: userData.user?.id
-        })
-        .eq("id", company.id);
-
-      if (error) {
-        // If the columns don't exist yet, fall back to hard delete
-        if (error.message.includes("deleted_by_id") || error.message.includes("deleted_at")) {
-          const { error: deleteError } = await supabase
-            .from("companies")
-            .delete()
-            .eq("id", company.id);
-          
-          if (deleteError) throw deleteError;
-          toast.success("Company deleted successfully!");
-        } else {
-          throw error;
+      // For admins deleting from recycle bin → permanent delete
+      if (userRole === "admin" && company.deletion_state === 'admin_recycle') {
+        if (!confirm("Are you sure you want to permanently delete this company? This action cannot be undone.")) {
+          return;
         }
-      } else {
-        toast.success("Company moved to recycle bin successfully!");
+
+        const { error } = await supabase
+          .from("companies")
+          .delete()
+          .eq("id", company.id);
+
+        if (error) throw error;
+        
+        toast.success("Company permanently deleted!");
+        onUpdate();
+        return;
       }
-      onUpdate();
+
+      // Default admin behavior: move to recycle bin
+      if (userRole === "admin") {
+        const { error } = await (supabase
+          .from("companies")
+          .update({
+            deletion_state: 'admin_recycle' as any,
+            deleted_at: new Date().toISOString(),
+            deleted_by_id: userData.user.id
+          } as any)
+          .eq("id", company.id) as any);
+
+        if (error) {
+          // Fallback if columns don't exist
+          if (error.message?.includes("deletion_state") || error.message?.includes("deleted_by_id")) {
+            const { error: fallbackError } = await supabase
+              .from("companies")
+              .update({
+                deleted_at: new Date().toISOString()
+              })
+              .eq("id", company.id);
+            
+            if (fallbackError) {
+              // Last resort: hard delete
+              const { error: deleteError } = await supabase
+                .from("companies")
+                .delete()
+                .eq("id", company.id);
+              
+              if (deleteError) throw deleteError;
+              toast.success("Company deleted successfully!");
+            } else {
+              toast.success("Company moved to recycle bin successfully!");
+            }
+          } else {
+            throw error;
+          }
+        } else {
+          toast.success("Company moved to recycle bin successfully!");
+        }
+        onUpdate();
+        return;
+      }
+
+      toast.error("Unable to delete company. Invalid state.");
     } catch (error: any) {
       toast.error(error.message || "Failed to delete company");
     }

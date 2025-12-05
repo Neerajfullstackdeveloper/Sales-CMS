@@ -18,27 +18,84 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
+    let hasFetched = false;
+    
     const loadAndRefresh = async () => {
+      // Show cached data immediately for faster perceived performance
       const stored = localStorage.getItem(`assignedCompanies_${userId}`);
       if (stored) {
         try {
           const parsed = JSON.parse(stored);
-          if (parsed?.data) {
-            setCompanies(parsed.data);
+          if (parsed?.data && parsed?.timestamp) {
+            const cacheAge = Date.now() - parsed.timestamp;
+            // Use cache if less than 2 minutes old
+            if (cacheAge < 120000) {
+              if (isMounted) {
+                setCompanies(parsed.data);
+                setLoading(false);
+              }
+              // Only refresh in background if tab is visible and not recently fetched
+              if (document.visibilityState === "visible" && !hasFetched) {
+                hasFetched = true;
+                fetchAssignedCompanies().finally(() => {
+                  hasFetched = false;
+                });
+              }
+              return;
+            }
           }
         } catch {}
       }
 
-      // Always revalidate with server to avoid stale cache
-      await fetchAssignedCompanies();
+      // Fetch fresh data only if not already fetched
+      if (!hasFetched && isMounted) {
+        hasFetched = true;
+        await fetchAssignedCompanies();
+        hasFetched = false;
+      }
     };
 
     loadAndRefresh();
+
+    // Handle visibility change - don't reload if data is fresh
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && isMounted && !hasFetched) {
+        const stored = localStorage.getItem(`assignedCompanies_${userId}`);
+        if (stored) {
+          try {
+            const parsed = JSON.parse(stored);
+            if (parsed?.timestamp) {
+              const cacheAge = Date.now() - parsed.timestamp;
+              // Only refresh if cache is older than 2 minutes
+              if (cacheAge > 120000) {
+                hasFetched = true;
+                fetchAssignedCompanies().finally(() => {
+                  hasFetched = false;
+                });
+              }
+            }
+          } catch {}
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      isMounted = false;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [userId]);
 
   const fetchAssignedCompanies = async () => {
     setLoading(true);
-    const { data, error } = await supabase
+    
+    // Calculate 24 hours ago timestamp for database filtering
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    
+    // Optimized query: only fetch latest comment per company, filter in database
+    const query = supabase
       .from("companies")
       .select(`
         *,
@@ -57,36 +114,50 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
       `)
       .eq("assigned_to_id", userId)
       .is("deleted_at", null)
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: true })
+      .limit(100); // Limit to prevent loading too much data
+
+    const { data, error } = await query;
 
     if (!error && data) {
+      // Filter out companies with deletion_state (if column exists)
+      let filteredData = data.filter((company: any) => !company.deletion_state);
+      
       // Filter out companies assigned for more than 24 hours
       const now = Date.now();
-      const filteredData = data.filter((company: any) => {
-        if (!company.assigned_at) return true; // Keep companies without assigned_at
+      const validCompanies: any[] = [];
+      const outdatedIds: string[] = [];
+
+      filteredData.forEach((company: any) => {
+        if (!company.assigned_at) {
+          validCompanies.push(company);
+          return;
+        }
         const assignedAt = new Date(company.assigned_at).getTime();
         const hoursSinceAssignment = (now - assignedAt) / (1000 * 60 * 60);
-        return hoursSinceAssignment < 24;
+        if (hoursSinceAssignment < 24) {
+          validCompanies.push(company);
+        } else {
+          outdatedIds.push(company.id);
+        }
       });
 
-      // If any companies are older than 24 hours, auto-unassign them
-      const outdatedCompanies = data.filter((company: any) => {
-        if (!company.assigned_at) return false;
-        const assignedAt = new Date(company.assigned_at).getTime();
-        const hoursSinceAssignment = (now - assignedAt) / (1000 * 60 * 60);
-        return hoursSinceAssignment >= 24;
-      });
-
-      if (outdatedCompanies.length > 0) {
-        // Unassign companies older than 24 hours
-        const outdatedIds = outdatedCompanies.map((c: any) => c.id);
-        await supabase
+      // Unassign outdated companies in parallel (non-blocking)
+      if (outdatedIds.length > 0) {
+        supabase
           .from("companies")
           .update({ assigned_to_id: null, assigned_at: null })
-          .in("id", outdatedIds);
+          .in("id", outdatedIds)
+          .then(() => {
+            // Silently handle - don't block UI
+          })
+          .catch(() => {
+            // Silently handle - don't block UI
+          });
       }
 
-      const companiesWithSortedComments = filteredData.map((company) => ({
+      // Sort comments once per company (only if needed)
+      const companiesWithSortedComments = validCompanies.map((company) => ({
         ...company,
         comments:
           company.comments?.sort(

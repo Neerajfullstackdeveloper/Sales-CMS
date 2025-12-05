@@ -245,7 +245,10 @@ const FacebookDataView = ({ userId, userRole }: FacebookDataViewProps) => {
           }
           
           // Show all data (both shared and unshared) for admin
-          data = allDataResult.data || [];
+          // Exclude items with deletion_state set (they're in inactive or recycle bins)
+          data = (allDataResult.data || []).filter((item: any) => 
+            !item.deletion_state || item.deletion_state === null
+          );
           queryError = null;
           
           console.log("📋 Admin query result:", { 
@@ -327,7 +330,10 @@ const FacebookDataView = ({ userId, userRole }: FacebookDataViewProps) => {
             data = [];
             queryError = facebookDataResult.error;
           } else {
-            data = facebookDataResult.data || [];
+            // Exclude items with deletion_state set (they're in inactive or recycle bins)
+            data = (facebookDataResult.data || []).filter((item: any) => 
+              !item.deletion_state || item.deletion_state === null
+            );
 
             // Try to fetch comments separately (gracefully handle if table doesn't exist)
             if (data.length > 0) {
@@ -485,9 +491,13 @@ const FacebookDataView = ({ userId, userRole }: FacebookDataViewProps) => {
           } else {
             // For employees, data comes directly from facebook_data table (already filtered by shared IDs)
             // We also hide entries whose latest comment category is "block" (Inactive),
+            // and exclude items with deletion_state set (they're in inactive or recycle bins)
             // so that deleted items disappear from the main Facebook Data section but
             // still appear in the Inactive category views.
             const employeeVisibleData = dataArray.filter((item: any) => {
+              // Exclude items with deletion_state set
+              if (item.deletion_state) return false;
+              
               const sortedComments = (item.comments || []).slice().sort(
                 (a: any, b: any) =>
                   new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
@@ -552,16 +562,21 @@ const FacebookDataView = ({ userId, userRole }: FacebookDataViewProps) => {
     try {
       const { data: userData } = await supabase.auth.getUser();
 
+      if (!userData.user) {
+        throw new Error("Not authenticated");
+      }
+
       // For employees, "delete" should move the Facebook data to Inactive (block) category
-      // by adding a block comment, not actually delete the record.
+      // by adding a block comment and setting deletion_state to 'inactive'
       if (userRole !== "admin") {
         const commentCategory = "block" as "block";
 
+        // Add block comment
         const { error: commentError } = await (supabase
           .from("facebook_data_comments" as any)
           .insert([{
             facebook_data_id: data.id,
-            user_id: userData.user?.id,
+            user_id: userData.user.id,
             comment_text: "Moved to Inactive by employee",
             category: commentCategory,
             comment_date: new Date().toISOString().slice(0, 10),
@@ -570,6 +585,36 @@ const FacebookDataView = ({ userId, userRole }: FacebookDataViewProps) => {
         if (commentError) {
           console.error("Error moving Facebook data to inactive via comment:", commentError);
           throw commentError;
+        }
+
+        // Set deletion_state to 'inactive'
+        const { error: updateError } = await (supabase
+          .from("facebook_data" as any)
+          .update({
+            deletion_state: 'inactive' as any,
+            deleted_at: new Date().toISOString(),
+            deleted_by_id: userData.user.id
+          })
+          .eq("id", data.id) as any);
+
+        if (updateError) {
+          console.error("Error setting deletion_state:", updateError);
+          
+          // Check if columns don't exist (migration not run)
+          if (updateError.message?.includes("deleted_at") || 
+              updateError.message?.includes("deletion_state") ||
+              updateError.message?.includes("deleted_by_id") ||
+              updateError.code === "PGRST204") {
+            toast.error(
+              "Database migration not applied. Please run the migration: 20250120000003_add_deletion_state_to_facebook_data.sql in Supabase SQL Editor.",
+              { duration: 10000 }
+            );
+            console.error("Migration required. Run: supabase/migrations/20250120000003_add_deletion_state_to_facebook_data.sql");
+            // Continue - the comment was added, so data will still move to inactive via comment
+            return;
+          }
+          
+          // Continue even if update fails - the comment was added
         }
 
         toast.success("Facebook data moved to Inactive section");

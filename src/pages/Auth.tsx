@@ -107,8 +107,8 @@ const Auth = () => {
         <CardContent>
           <Tabs defaultValue="login" className="w-full">
             <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="login">Login</TabsTrigger>
-              <TabsTrigger value="signup">Sign Up</TabsTrigger>
+              <TabsTrigger key="login-tab" value="login">Login</TabsTrigger>
+              <TabsTrigger key="signup-tab" value="signup">Sign Up</TabsTrigger>
             </TabsList>
 
             <TabsContent value="login">
@@ -191,9 +191,9 @@ const Auth = () => {
                       <SelectValue placeholder="Choose your role" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="employee">Employee</SelectItem>
-                      <SelectItem value="team_lead">Team Lead</SelectItem>
-                      <SelectItem value="admin">Admin</SelectItem>
+                      <SelectItem key="role-employee" value="employee">Employee</SelectItem>
+                      <SelectItem key="role-team_lead" value="team_lead">Team Lead</SelectItem>
+                      <SelectItem key="role-admin" value="admin">Admin</SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
