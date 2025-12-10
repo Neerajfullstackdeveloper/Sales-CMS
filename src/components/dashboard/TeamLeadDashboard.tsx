@@ -12,7 +12,6 @@ import {
   Database,
   Plus,
   MessageSquarePlus,
-  Users,
   UserPlus,
   BarChart3,
   Trash2,
@@ -29,7 +28,6 @@ import BlockDataView from "./views/BlockDataView";
 import GeneralDataView from "./views/GeneralDataView";
 import AddNewDataView from "./views/AddNewDataView";
 import RequestDataView from "./views/RequestDataView";
-import TeamManagementView from "./views/TeamManagementView";
 import DataAssignmentView from "./views/DataAssignmentView";
 import EmployeeDataOverviewView from "./views/EmployeeDataOverviewView";
 import RecycleBinView from "./views/RecycleBinView";
@@ -351,7 +349,6 @@ const TeamLeadDashboard = ({ user }: TeamLeadDashboardProps) => {
     { id: "general", label: "General Data", icon: Database, count: categoryCounts.general },
     { id: "add", label: "Add New Data", icon: Plus },
     { id: "request", label: "Request Data", icon: MessageSquarePlus },
-    { id: "team", label: "Team Management", icon: Users },
     { id: "assign", label: "Assign Data", icon: UserPlus },
     { id: "view-employees", label: "View Employees", icon: LogIn },
     { id: "overview", label: "Data Overview", icon: BarChart3 },
@@ -432,7 +429,6 @@ const TeamLeadDashboard = ({ user }: TeamLeadDashboardProps) => {
       {currentView === "general" && <GeneralDataView userId={user.id} userRole="team_lead" />}
       {currentView === "add" && <AddNewDataView userId={user.id} userRole="team_lead" />}
       {currentView === "request" && <RequestDataView userId={user.id} />}
-      {currentView === "team" && <TeamManagementView userId={user.id} />}
       {currentView === "assign" && <DataAssignmentView userId={user.id} />}
       {currentView === "view-employees" && (
         <TeamLeadEmployeeView teamLeadId={user.id} onLoginAsUser={handleLoginAsUser} />

@@ -41,6 +41,7 @@ import PaidClientPoolView from "./views/PaidClientPoolView";
 import FacebookDeleteDataView from "./views/FacebookDeleteDataView";
 import GeneralDeleteDataView from "./views/GeneralDeleteDataView";
 import SearchDataView from "./views/SearchDataView";
+import AdminTeamManagementView from "./views/AdminTeamManagementView";
 import { Button } from "@/components/ui/button";
 
 interface AdminDashboardProps {
@@ -275,6 +276,7 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
     { id: "search", label: "Search Data", icon: Search },
     { id: "paid-clients", label: "Paid Client Pool", icon: DollarSign, count: categoryCounts["paid-clients"] },
     { id: "employees", label: "Employee Management", icon: Users },
+    { id: "team-management", label: "Team Management", icon: Users },
     { id: "teams", label: "Team Creation", icon: UserPlus },
     { id: "view-users", label: "View Users", icon: LogIn },
     { id: "requests", label: "Data Requests", icon: MessageSquare, count: categoryCounts.requests },
@@ -361,6 +363,7 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
       {currentView === "search" && <SearchDataView />}
       {currentView === "paid-clients" && <PaidClientPoolView userRole="admin" />}
       {currentView === "employees" && <EmployeeManagementView />}
+      {currentView === "team-management" && <AdminTeamManagementView />}
       {currentView === "teams" && <TeamCreationView />}
       {currentView === "view-users" && (
         <UserImpersonationView onLoginAsUser={handleLoginAsUser} />

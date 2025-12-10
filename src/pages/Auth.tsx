@@ -105,7 +105,7 @@ const Auth = () => {
           <CardDescription>Manage your customer relationships efficiently</CardDescription>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="login" className="w-full">
+          <Tabs defaultValue="login" className="w-full ">
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger key="login-tab" value="login">Login</TabsTrigger>
               <TabsTrigger key="signup-tab" value="signup">Sign Up</TabsTrigger>
@@ -121,6 +121,7 @@ const Auth = () => {
                     placeholder="Enter your email"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
+                    className="border-white/20 placeholder:text-white/60"
                     required
                   />
                 </div>
@@ -132,6 +133,7 @@ const Auth = () => {
                     placeholder="Enter your password"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
+                    className="border-white/20 placeholder:text-white/60"
                     required
                   />
                 </div>
@@ -158,6 +160,7 @@ const Auth = () => {
                     placeholder="Enter your name"
                     value={signupName}
                     onChange={(e) => setSignupName(e.target.value)}
+                    className="border-white/20 placeholder:text-white/60"
                     required
                   />
                 </div>
@@ -169,6 +172,7 @@ const Auth = () => {
                     placeholder="Enter your email"
                     value={signupEmail}
                     onChange={(e) => setSignupEmail(e.target.value)}
+                    className="border-white/20 placeholder:text-white/60"
                     required
                   />
                 </div>
@@ -180,12 +184,13 @@ const Auth = () => {
                     placeholder="Create a password (min 6 characters)"
                     value={signupPassword}
                     onChange={(e) => setSignupPassword(e.target.value)}
+                    className="border-white/20 placeholder:text-white/60"
                     required
                     minLength={6}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="signup-role">Select Your Role</Label>
+                <div className="space-y-2 text-white/90">
+                  <Label className="text-black/80" htmlFor="signup-role">Select Your Role</Label>
                   <Select value={signupRole} onValueChange={(value: "employee" | "team_lead" | "admin") => setSignupRole(value)}>
                     <SelectTrigger id="signup-role">
                       <SelectValue placeholder="Choose your role" />
