@@ -25,11 +25,12 @@ const TeamLeadEmployeeView = ({ teamLeadId, onLoginAsUser }: TeamLeadEmployeeVie
     setLoading(true);
     try {
       // First, get the team for this team lead
-      const { data: teamData, error: teamError } = await supabase
+      const { data: teamRows, error: teamError } = await supabase
         .from("teams")
         .select("id")
         .eq("team_lead_id", teamLeadId)
-        .single();
+        .limit(1);
+      const teamData = teamRows?.[0] || null;
 
       if (teamError || !teamData) {
         setEmployees([]);
@@ -117,7 +118,7 @@ const TeamLeadEmployeeView = ({ teamLeadId, onLoginAsUser }: TeamLeadEmployeeVie
           placeholder="Search by name or email..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="max-w-md"
+          className="max-w-md placeholder:text-white/80"
         />
       </div>
 

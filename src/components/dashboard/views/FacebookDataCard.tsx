@@ -249,7 +249,12 @@ const FacebookDataCard = ({
     <Card className="group hover:shadow-lg transition-all duration-300 hover:border-primary/20 border-2 overflow-hidden flex flex-col h-full">
       <CardHeader className="pb-4 flex-shrink-0">
         <div className="flex flex-col gap-2">
-          <div className="flex items-start justify-end gap-3">
+          <div className="flex items-start justify-between gap-3">
+            <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-900 dark:text-blue-200 dark:border-blue-700 flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold">
+              <Share2 className="h-3 w-3" />
+              Facebook
+            </Badge>
+            <div className="flex items-center gap-2">
             {userRole === "admin" && onEdit && (
               <Button
                 variant="outline"
@@ -281,6 +286,7 @@ const FacebookDataCard = ({
                 </Button>
               ) : null
             )}
+            </div>
           </div>
           <div className="flex-1 min-w-0">
             <CardTitle className="flex items-center gap-2 text-lg font-semibold text-foreground">

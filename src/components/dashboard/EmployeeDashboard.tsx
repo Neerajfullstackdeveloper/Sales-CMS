@@ -15,6 +15,7 @@ import {
   MessageSquarePlus,
   LogOut,
   Share2,
+  Search,
 } from "lucide-react";
 import DashboardLayout from "./DashboardLayout";
 import AssignedDataView from "./views/AssignedDataView";
@@ -26,6 +27,7 @@ import BlockDataView from "./views/BlockDataView";
 import GeneralDataView from "./views/GeneralDataView";
 import AddNewDataView from "./views/AddNewDataView";
 import RequestDataView from "./views/RequestDataView";
+import SearchDataView from "./views/SearchDataView";
 
 interface EmployeeDashboardProps {
   user: User;
@@ -46,29 +48,74 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
   const fetchCategoryCounts = async () => {
     try {
       const counts: Record<string, number> = {};
+      
+      // Initialize assigned count to 0 to prevent stale data
+      counts.assigned = 0;
 
       // Fetch assigned companies count (without comments, within 24 hours)
+      // Match the exact filtering logic from AssignedDataView
+      // IMPORTANT: Apply the same limit(100) as the view to get accurate count
       const { data: assignedCompanies } = await supabase
         .from("companies")
         .select(`
           id,
           assigned_at,
+          deletion_state,
           comments (id)
         `)
         .eq("assigned_to_id", user.id)
-        .is("deleted_at", null);
+        .is("deleted_at", null)
+        .order("assigned_at", { ascending: false, nullsLast: true })
+        .limit(100); // Match the view's limit and ordering to get accurate count
 
       if (assignedCompanies) {
         const now = Date.now();
-        const assignedCount = assignedCompanies.filter((company: any) => {
-          if (!company.assigned_at) return false;
+        const totalBeforeFilter = assignedCompanies.length;
+        
+        // Apply the exact same filtering logic as AssignedDataView
+        // Step 1: Filter out companies with deletion_state
+        let filteredData = assignedCompanies.filter((company: any) => !company.deletion_state);
+        const afterDeletionStateFilter = filteredData.length;
+        
+        // Step 2: Filter out companies assigned for more than 24 hours
+        // Match the view logic exactly - include companies without assigned_at
+        const validCompanies: any[] = [];
+        filteredData.forEach((company: any) => {
+          if (!company.assigned_at) {
+            // Include companies without assigned_at (matches view logic)
+            validCompanies.push(company);
+            return;
+          }
+          
           const assignedAt = new Date(company.assigned_at).getTime();
           const hoursSinceAssignment = (now - assignedAt) / (1000 * 60 * 60);
-          if (hoursSinceAssignment >= 24) return false;
-          // Only count companies without comments
+          if (hoursSinceAssignment < 24) {
+            // Only include if within 24 hours
+            validCompanies.push(company);
+          }
+          // Companies older than 24 hours are excluded (filtered out)
+        });
+        const afterTimeFilter = validCompanies.length;
+        
+        // Step 3: For employees, filter out companies with comments (already categorized)
+        // Employees should only see uncategorized companies in Assigned Data
+        const finalCount = validCompanies.filter((company: any) => {
+          // Keep only companies with no comments (uncategorized)
           return !company.comments || company.comments.length === 0;
         }).length;
-        counts.assigned = assignedCount;
+        
+        console.log("📊 Assigned Data Count Calculation:", {
+          totalBeforeFilter,
+          afterDeletionStateFilter,
+          afterTimeFilter,
+          finalCount,
+          filteredOutByTime: afterDeletionStateFilter - afterTimeFilter,
+          filteredOutByComments: afterTimeFilter - finalCount
+        });
+        
+        counts.assigned = finalCount;
+      } else {
+        counts.assigned = 0;
       }
 
       // Fetch Facebook data count (shared to employee, without comments)
@@ -192,7 +239,7 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
       counts.today = todayCount;
 
       // Fetch category counts (companies + facebook data with latest comment in each category)
-      const categories = ['follow_up', 'hot', 'block', 'general'];
+      const categories = ['follow_up', 'hot', 'general'];
       
       for (const category of categories) {
         let categoryCount = 0;
@@ -249,15 +296,108 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
         const categoryMap: Record<string, string> = {
           'follow_up': 'followup',
           'hot': 'hot',
-          'block': 'block',
           'general': 'general'
         };
         counts[categoryMap[category]] = categoryCount;
       }
 
+      // --- Block / Inactive Pool count (matches BlockDataView filtering) ---
+      let blockCount = 0;
+
+      // Companies in inactive pool
+      const { data: blockCompanies } = await supabase
+        .from("companies")
+        .select(`
+          id,
+          deletion_state,
+          comments (id, category, created_at)
+        `)
+        .eq("assigned_to_id", user.id)
+        .is("deleted_at", null);
+
+      if (blockCompanies) {
+        blockCount += blockCompanies.filter((company: any) => {
+          const deletionState = (company as any).deletion_state;
+
+          // Exclude items moved to recycle bins
+          if (deletionState === "team_lead_recycle" || deletionState === "admin_recycle") return false;
+
+          // Show items with deletion_state='inactive'
+          if (deletionState === "inactive") return true;
+
+          // If other deletion_state values exist, exclude
+          if (deletionState) return false;
+
+          // Otherwise, check latest comment for block
+          if (!company.comments || company.comments.length === 0) return false;
+          const sortedComments = [...company.comments].sort(
+            (a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          );
+          const latestComment = sortedComments[0];
+          return latestComment && latestComment.category === "block";
+        }).length;
+      }
+
+      // Facebook data in inactive pool
+      if (shares && shares.length > 0) {
+        const fbIds = shares.map((s: any) => s.facebook_data_id);
+
+        const { data: fbData } = await (supabase
+          .from("facebook_data" as any)
+          .select(`
+            id,
+            deletion_state
+          `)
+          .in("id", fbIds) as any);
+
+        let commentsMap = new Map();
+        const { data: fbComments } = await (supabase
+          .from("facebook_data_comments" as any)
+          .select("id, facebook_data_id, category, created_at")
+          .in("facebook_data_id", fbIds) as any);
+
+        if (fbComments) {
+          fbComments.forEach((comment: any) => {
+            if (!commentsMap.has(comment.facebook_data_id)) {
+              commentsMap.set(comment.facebook_data_id, []);
+            }
+            commentsMap.get(comment.facebook_data_id).push(comment);
+          });
+        }
+
+        if (fbData) {
+          blockCount += fbData.filter((fb: any) => {
+            const deletionState = fb.deletion_state;
+
+            // Exclude items moved to recycle bins
+            if (deletionState === "team_lead_recycle" || deletionState === "admin_recycle") return false;
+
+            // Show items with deletion_state='inactive'
+            if (deletionState === "inactive") return true;
+
+            // If other deletion_state values exist, exclude
+            if (deletionState) return false;
+
+            // Otherwise, check latest comment for block
+            const fbCommentList = commentsMap.get(fb.id) || [];
+            if (fbCommentList.length === 0) return false;
+            const sortedComments = [...fbCommentList].sort(
+              (a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+            );
+            const latestComment = sortedComments[0];
+            return latestComment && latestComment.category === "block";
+          }).length;
+        }
+      }
+
+      counts.block = blockCount;
+
+      console.log("✅ Setting category counts:", counts);
       setCategoryCounts(counts);
     } catch (error) {
       console.error("Error fetching category counts:", error);
+      // On error, reset counts to prevent showing stale data
+      setCategoryCounts({ assigned: 0 });
     }
   };
 
@@ -330,6 +470,7 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
   const menuItems = [
     { id: "assigned", label: "Assigned Data", icon: LayoutDashboard, count: categoryCounts.assigned },
     { id: "facebook", label: "Facebook Data", icon: Share2, count: categoryCounts.facebook },
+    { id: "search", label: "Search Data", icon: Search },
     { id: "today", label: "Today Data", icon: Calendar, count: categoryCounts.today },
     { id: "followup", label: "Active Pool", icon: TrendingUp, count: categoryCounts.followup },
     { id: "hot", label: "Prime Pool", icon: Flame, count: categoryCounts.hot },
@@ -350,6 +491,7 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
     >
       {currentView === "assigned" && <AssignedDataView userId={user.id} userRole="employee" />}
       {currentView === "facebook" && <FacebookDataView userId={user.id} userRole="employee" />}
+      {currentView === "search" && <SearchDataView />}
       {currentView === "today" && <TodayDataView userId={user.id} userRole="employee" />}
       {currentView === "followup" && <FollowUpDataView userId={user.id} userRole="employee" />}
       {currentView === "hot" && <HotDataView userId={user.id} userRole="employee" />}

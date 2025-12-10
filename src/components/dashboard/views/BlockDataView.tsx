@@ -217,35 +217,127 @@ const BlockDataView = ({ userId, userRole }: BlockDataViewProps) => {
         (fb.comments && fb.comments.length > 0 && 
          fb.comments[fb.comments.length - 1]?.category === "block");
 
-      // For employees deleting from inactive section → move to team lead recycle (or admin if no team)
-      if (userRole === "employee" && isInInactive) {
-        let deletionState: 'team_lead_recycle' | 'admin_recycle' = 'admin_recycle';
-        let successMessage = "Facebook data moved to Admin's recycle bin";
+      console.log("🗑️ BlockDataView - Deleting Facebook data:", {
+        id: fb.id,
+        deletion_state: fb.deletion_state,
+        isInInactive,
+        userRole,
+        userId: userData.user.id
+      });
 
-        // Try to get team lead ID for this employee
-        // Step 1: Get team_id from team_members
+      // For employees deleting from inactive section → move to team lead recycle (never admin)
+      if (userRole === "employee" && isInInactive) {
+        // Always route to team_lead_recycle when employee deletes from inactive pool
+        // This ensures data goes to team leader's recycle bin, not admin's
+        let deletionState: 'team_lead_recycle' | 'admin_recycle' = 'team_lead_recycle';
+        let successMessage = "Facebook data moved to Team Lead's recycle bin";
+
+        // Try to get team lead ID for this employee (for logging purposes)
+        // Use a different approach: query teams table directly with a join-like query
+        // This avoids RLS issues with team_members table
+        console.log("🔍 BlockDataView - Looking up team for employee:", userData.user.id);
+        
+        // First, try to get team_id from team_members (may fail due to RLS)
         const { data: teamMemberData, error: teamMemberError } = await (supabase
           .from("team_members" as any)
-          .select("team_id")
+          .select("team_id, employee_id")
           .eq("employee_id", userData.user.id)
           .maybeSingle() as any);
 
-        if (!teamMemberError && teamMemberData && teamMemberData.team_id) {
-          // Step 2: Get team_lead_id from teams table
+        console.log("🔍 BlockDataView - Team member lookup result:", {
+          teamMemberData,
+          teamMemberError: teamMemberError?.message,
+          hasTeamId: !!teamMemberData?.team_id
+        });
+
+        // If team_members query fails or returns null, try alternative approach
+        // Query teams table and check if employee is in team_members via a different method
+        if (teamMemberError || !teamMemberData || !teamMemberData.team_id) {
+          console.warn("⚠️ BlockDataView - Could not find team via team_members, trying alternative approach");
+          
+          // Alternative: Get all teams and check if employee is a member
+          // This might work if RLS allows reading teams
+          const { data: allTeams, error: teamsError } = await (supabase
+            .from("teams" as any)
+            .select("id, team_lead_id") as any);
+          
+          if (!teamsError && allTeams && allTeams.length > 0) {
+            // For each team, check if employee is a member
+            for (const team of allTeams) {
+              const { data: memberCheck, error: memberCheckError } = await (supabase
+                .from("team_members" as any)
+                .select("employee_id")
+                .eq("team_id", team.id)
+                .eq("employee_id", userData.user.id)
+                .maybeSingle() as any);
+              
+              if (!memberCheckError && memberCheck) {
+                // Found the team! Log for debugging
+                if (team.team_lead_id) {
+                  console.log("✅ BlockDataView - Found team lead via alternative method:", team.team_lead_id, "for team:", team.id);
+                }
+                break;
+              }
+            }
+          }
+        } else if (teamMemberData && teamMemberData.team_id) {
+          // Original method worked - get team_lead_id from teams table
           const { data: teamData, error: teamError } = await (supabase
             .from("teams" as any)
-            .select("team_lead_id")
+            .select("team_lead_id, id")
             .eq("id", teamMemberData.team_id)
             .maybeSingle() as any);
 
+          console.log("🔍 BlockDataView - Team lookup result:", {
+            teamData,
+            teamError: teamError?.message,
+            teamId: teamMemberData.team_id,
+            hasTeamLeadId: !!teamData?.team_lead_id
+          });
+
           if (!teamError && teamData && teamData.team_lead_id) {
-            // Employee has a team lead, move to team lead recycle
-            deletionState = 'team_lead_recycle';
-            successMessage = "Facebook data moved to Team Lead's recycle bin";
+            // Employee has a team lead
+            console.log("✅ BlockDataView - Found team lead:", teamData.team_lead_id, "for team:", teamData.id);
+          } else {
+            console.warn("⚠️ BlockDataView - No team lead found in team (data will still go to team_lead_recycle):", {
+              teamId: teamMemberData.team_id,
+              teamError: teamError?.message,
+              teamData
+            });
+          }
+        }
+        
+        console.log("✅ BlockDataView - Employee deletion from inactive pool will go to team_lead_recycle (not admin_recycle)");
+
+        // Ensure there's a "block" comment to preserve the category in recycle bin
+        // Check if there's already a "block" comment
+        const hasBlockComment = fb.comments && fb.comments.some((c: any) => c.category === 'block');
+        
+        if (!hasBlockComment) {
+          // Add a "block" comment to preserve the inactive category
+          console.log("📝 BlockDataView - Adding 'block' comment to preserve inactive category");
+          const { error: commentError } = await (supabase
+            .from("facebook_data_comments" as any)
+            .insert({
+              facebook_data_id: fb.id,
+              user_id: userData.user.id,
+              comment_text: "Moved from Inactive Pool to Recycle Bin",
+              category: "block"
+            } as any));
+          
+          if (commentError) {
+            console.warn("⚠️ BlockDataView - Could not add block comment:", commentError);
+            // Continue with deletion even if comment addition fails
+          } else {
+            console.log("✅ BlockDataView - Added 'block' comment to preserve inactive category");
           }
         }
 
-        // If no team lead found, it will go to admin_recycle (default)
+        console.log("💾 BlockDataView - Updating Facebook data:", {
+          id: fb.id,
+          deletion_state: deletionState,
+          deleted_by_id: userData.user.id
+        });
 
         // Update deletion_state to move to recycle bin
         const { error: updateError } = await (supabase
@@ -274,6 +366,33 @@ const BlockDataView = ({ userId, userRole }: BlockDataViewProps) => {
           }
           
           throw updateError;
+        }
+
+        // Verify the update was successful
+        const { data: verifyData, error: verifyError } = await (supabase
+          .from("facebook_data" as any)
+          .select("id, deletion_state, deleted_by_id, deleted_at")
+          .eq("id", fb.id)
+          .single() as any);
+
+        if (!verifyError && verifyData) {
+          console.log("✅ BlockDataView - Verification after update:", {
+            id: verifyData.id,
+            deletion_state: verifyData.deletion_state,
+            deleted_by_id: verifyData.deleted_by_id,
+            deleted_at: verifyData.deleted_at,
+            expected_state: deletionState
+          });
+
+          if (verifyData.deletion_state !== deletionState) {
+            console.error("❌ BlockDataView - Mismatch! Expected:", deletionState, "Got:", verifyData.deletion_state);
+            console.error("❌ BlockDataView - This means the update failed. Check RLS policies.");
+            toast.error("Warning: Deletion state may not have been set correctly. Please check the recycle bin and ensure RLS policies allow employees to update deletion_state.");
+          } else {
+            console.log("✅ BlockDataView - Update successful! Data should appear in:", deletionState === 'team_lead_recycle' ? "Team Lead's recycle bin" : "Admin's recycle bin");
+          }
+        } else {
+          console.error("❌ BlockDataView - Could not verify update:", verifyError);
         }
 
         toast.success(successMessage);

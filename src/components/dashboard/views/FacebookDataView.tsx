@@ -921,15 +921,15 @@ const FacebookDataView = ({ userId, userRole }: FacebookDataViewProps) => {
             size="sm"
             onClick={fetchFacebookData}
             disabled={loading}
-            className="flex items-center gap-2"
+            className="flex items-center gap-2 text-white"
           >
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-4 w-4 text-white ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
         </div>
       </div>
       
-      {error && (
+      {/* {error && (
         <Card className="border-destructive bg-destructive/10">
           <CardContent className="flex flex-col gap-3 pt-6">
             <div className="flex items-center gap-3">
@@ -1091,7 +1091,7 @@ CREATE POLICY "Allow authenticated users to view facebook data"
             )}
           </CardContent>
         </Card>
-      )}
+      )} */}
 
       {!error && facebookData.length === 0 && !loading ? (
         <Card className="border-dashed">

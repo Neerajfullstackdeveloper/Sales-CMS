@@ -103,7 +103,7 @@ const UserImpersonationView = ({ onLoginAsUser }: UserImpersonationViewProps) =>
             placeholder="Search by name or email..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="max-w-md "
+            className="max-w-md placeholder:text-white/60"
           />
         </div>
         <div className="flex gap-2 text-white">

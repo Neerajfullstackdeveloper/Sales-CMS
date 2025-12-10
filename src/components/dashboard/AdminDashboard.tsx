@@ -19,6 +19,8 @@ import {
   LogIn,
   ArrowLeft,
   FileCheck,
+  DollarSign,
+  Search,
 } from "lucide-react";
 import DashboardLayout from "./DashboardLayout";
 import AllCompaniesView from "./views/AllCompaniesView";
@@ -35,6 +37,10 @@ import UserImpersonationView from "./views/UserImpersonationView";
 import EmployeeDashboard from "./EmployeeDashboard";
 import TeamLeadDashboard from "./TeamLeadDashboard";
 import CompanyApprovalView from "./views/CompanyApprovalView";
+import PaidClientPoolView from "./views/PaidClientPoolView";
+import FacebookDeleteDataView from "./views/FacebookDeleteDataView";
+import GeneralDeleteDataView from "./views/GeneralDeleteDataView";
+import SearchDataView from "./views/SearchDataView";
 import { Button } from "@/components/ui/button";
 
 interface AdminDashboardProps {
@@ -62,13 +68,24 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
   const fetchCategoryCounts = async () => {
     try {
       // Fetch all counts in parallel for faster loading
+      // First, get all team lead IDs for filtering delete data
+      const { data: teamLeads } = await supabase
+        .from("user_roles")
+        .select("user_id")
+        .eq("role", "team_lead");
+
+      const teamLeadIds = teamLeads?.map((tl: any) => tl.user_id) || [];
+
       const [
         companiesResult,
         facebookResult,
         dataRequestsResult,
         editRequestsResult,
         recycleResult,
-        approvalsResult
+        approvalsResult,
+        paidClientsResult,
+        facebookDeleteResult,
+        generalDeleteResult
       ] = await Promise.all([
         supabase
           .from("companies")
@@ -84,15 +101,47 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
           .from("facebook_data_edit_requests" as any)
           .select("*", { count: "exact", head: true })
           .eq("status", "pending") as any,
-        supabase
-          .from("companies")
-          .select("*", { count: "exact", head: true })
-          .not("deleted_at", "is", null),
+        // Recycle bin count removed - using specialized delete sections instead
+        Promise.resolve({ count: 0 }),
         supabase
           .from("companies" as any)
           .select("*", { count: "exact", head: true })
           .eq("approval_status", "pending")
-          .is("deleted_at", null) as any
+          .is("deleted_at", null) as any,
+        // Fetch paid clients count (companies with is_paid = true)
+        supabase
+          .from("companies" as any)
+          .select("*", { count: "exact", head: true })
+          .eq("is_paid", true)
+          .is("deleted_at", null) as any,
+        // Fetch Facebook delete data count (all admin_recycle deletions)
+        // Match the logic in FacebookDeleteDataView: include ALL admin_recycle deletions
+        // since we can't reliably distinguish team lead deletions from admin deletions
+        (async () => {
+          // Get all admin_recycle Facebook data
+          const { data: allData } = await (supabase
+            .from("facebook_data" as any)
+            .select("id")
+            .eq("deletion_state", "admin_recycle") as any);
+          
+          // Count all admin_recycle items (matching FacebookDeleteDataView logic)
+          const count = allData?.length || 0;
+          return { count };
+        })(),
+        // Fetch General delete data count (all admin_recycle deletions)
+        // Match the logic in GeneralDeleteDataView: include ALL admin_recycle deletions
+        // since we can't reliably distinguish team lead deletions from admin deletions
+        (async () => {
+          // Get all admin_recycle companies
+          const { data: allData } = await supabase
+            .from("companies")
+            .select("id")
+            .eq("deletion_state", "admin_recycle");
+          
+          // Count all admin_recycle items (matching GeneralDeleteDataView logic)
+          const count = allData?.length || 0;
+          return { count };
+        })()
       ]);
 
       const counts: Record<string, number> = {
@@ -100,8 +149,10 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
         facebook: facebookResult.count || 0,
         requests: dataRequestsResult.count || 0,
         "edit-requests": editRequestsResult.count || 0,
-        recycle: recycleResult.count || 0,
         approvals: approvalsResult.count || 0,
+        "paid-clients": paidClientsResult.count || 0,
+        "facebook-delete": facebookDeleteResult.count || 0,
+        "general-delete": generalDeleteResult.count || 0,
       };
 
       setCategoryCounts(counts);
@@ -113,8 +164,10 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
         facebook: 0,
         requests: 0,
         "edit-requests": 0,
-        recycle: 0,
         approvals: 0,
+        "paid-clients": 0,
+        "facebook-delete": 0,
+        "general-delete": 0,
       });
     }
   };
@@ -219,13 +272,16 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
     { id: "approvals", label: "Company Approvals", icon: FileCheck, count: categoryCounts.approvals },
     { id: "assign", label: "Assign Data", icon: UserCog },
     { id: "facebook", label: "Facebook Data", icon: Share2, count: categoryCounts.facebook },
+    { id: "search", label: "Search Data", icon: Search },
+    { id: "paid-clients", label: "Paid Client Pool", icon: DollarSign, count: categoryCounts["paid-clients"] },
     { id: "employees", label: "Employee Management", icon: Users },
     { id: "teams", label: "Team Creation", icon: UserPlus },
     { id: "view-users", label: "View Users", icon: LogIn },
     { id: "requests", label: "Data Requests", icon: MessageSquare, count: categoryCounts.requests },
     { id: "edit-requests", label: "Edit Requests", icon: Pencil, count: categoryCounts["edit-requests"] },
     { id: "holidays", label: "Holidays", icon: CalendarDays },
-    { id: "recycle", label: "Recycle Bin", icon: Trash2, count: categoryCounts.recycle },
+    { id: "facebook-delete", label: "Facebook Delete Data", icon: Share2, count: categoryCounts["facebook-delete"] },
+    { id: "general-delete", label: "General Delete Data", icon: Building2, count: categoryCounts["general-delete"] },
   ];
 
   // If impersonating, show the appropriate dashboard
@@ -302,6 +358,8 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
       {currentView === "approvals" && <CompanyApprovalView />}
       {currentView === "assign" && <AdminDataAssignmentView />}
       {currentView === "facebook" && <FacebookDataView userId={user.id} userRole="admin" />}
+      {currentView === "search" && <SearchDataView />}
+      {currentView === "paid-clients" && <PaidClientPoolView userRole="admin" />}
       {currentView === "employees" && <EmployeeManagementView />}
       {currentView === "teams" && <TeamCreationView />}
       {currentView === "view-users" && (
@@ -310,7 +368,8 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
       {currentView === "requests" && <DataRequestsView />}
       {currentView === "edit-requests" && <EditRequestsView />}
       {currentView === "holidays" && <HolidaysView />}
-      {currentView === "recycle" && <RecycleBinView userRole="admin" />}
+      {currentView === "facebook-delete" && <FacebookDeleteDataView />}
+      {currentView === "general-delete" && <GeneralDeleteDataView />}
     </DashboardLayout>
   );
 };

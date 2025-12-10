@@ -34,29 +34,8 @@ const CompanyApprovalView = () => {
 
       if (pendingError) throw pendingError;
 
-      // Fetch nonshifted data (companies not assigned to any employee)
-      // Show all companies that are not assigned, excluding rejected and pending ones
-      const { data: allNonshifted, error: nonshiftedError } = await (supabase
-        .from("companies" as any)
-        .select(`
-          *,
-          created_by:profiles!created_by_id(display_name, email)
-        `)
-        .is("assigned_to_id", null)
-        .is("deleted_at", null)
-        .order("created_at", { ascending: false }) as any);
-
-      if (nonshiftedError) throw nonshiftedError;
-
-      // Filter out pending (they're in New Listed Data) and rejected companies
-      const nonshifted = (allNonshifted || []).filter((company: any) => 
-        company.approval_status !== "pending" && company.approval_status !== "rejected"
-      );
-
-      if (nonshiftedError) throw nonshiftedError;
-
       // Fetch shifted data (companies assigned to an employee)
-      // Include all companies that have been assigned, regardless of approval status
+      // Include all companies that have been assigned (not null and not empty string)
       const { data: shifted, error: shiftedError } = await (supabase
         .from("companies" as any)
         .select(`
@@ -70,9 +49,94 @@ const CompanyApprovalView = () => {
 
       if (shiftedError) throw shiftedError;
 
+      // Filter out any shifted companies with empty string assigned_to_id
+      const validShifted = (shifted || []).filter((c: any) => c.assigned_to_id && c.assigned_to_id.trim() !== "");
+
+      // Get count of all companies for verification
+      const { count: allCompaniesCount, error: countError } = await supabase
+        .from("companies")
+        .select("*", { count: "exact", head: true })
+        .is("deleted_at", null);
+
+      if (countError) throw countError;
+
+      // Get count of shifted companies
+      const { count: shiftedCount, error: shiftedCountError } = await supabase
+        .from("companies")
+        .select("*", { count: "exact", head: true })
+        .not("assigned_to_id", "is", null)
+        .is("deleted_at", null);
+
+      if (shiftedCountError) throw shiftedCountError;
+
+      // Fetch nonshifted data (companies not assigned to any employee)
+      // Fetch all unassigned companies (NULL assigned_to_id)
+      // Note: Supabase has a default limit of 1000 rows, so we need to handle pagination
+      let allNonshifted: any[] = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data: nonshiftedPage, error: nonshiftedError } = await (supabase
+          .from("companies" as any)
+          .select(`
+            *,
+            created_by:profiles!created_by_id(display_name, email)
+          `)
+          .is("deleted_at", null)
+          .is("assigned_to_id", null)
+          .order("created_at", { ascending: false })
+          .range(page * pageSize, (page + 1) * pageSize - 1) as any);
+
+        if (nonshiftedError) throw nonshiftedError;
+
+        if (nonshiftedPage && nonshiftedPage.length > 0) {
+          allNonshifted = [...allNonshifted, ...nonshiftedPage];
+          hasMore = nonshiftedPage.length === pageSize;
+          page++;
+        } else {
+          hasMore = false;
+        }
+      }
+
+      // Also fetch companies with empty string assigned_to_id (if any)
+      const { data: emptyAssigned, error: emptyError } = await (supabase
+        .from("companies" as any)
+        .select(`
+          *,
+          created_by:profiles!created_by_id(display_name, email)
+        `)
+        .is("deleted_at", null)
+        .eq("assigned_to_id", "")
+        .order("created_at", { ascending: false }) as any);
+
+      if (emptyError) {
+        console.warn("Error fetching empty assigned_to_id companies:", emptyError);
+      }
+
+      // Combine NULL and empty string assigned_to_id companies
+      const allNonshiftedCombined = [...allNonshifted, ...(emptyAssigned || [])];
+
+      if (shiftedError) throw shiftedError;
+
+      // Verify counts match
+      const totalCount = (shiftedCount || 0) + allNonshiftedCombined.length;
+      
+      console.log("📊 Company Count Verification:", {
+        shifted: shiftedCount || 0,
+        shiftedFetched: validShifted.length,
+        nonshifted: allNonshiftedCombined.length,
+        total: totalCount,
+        allCompaniesCount: allCompaniesCount || 0,
+        difference: (allCompaniesCount || 0) - totalCount,
+        pending: pendingData?.length || 0,
+        emptyAssigned: emptyAssigned?.length || 0
+      });
+
       setNewListedData(pendingData || []);
-      setNonshiftedData(nonshifted || []);
-      setShiftedData(shifted || []);
+      setNonshiftedData(allNonshiftedCombined || []);
+      setShiftedData(validShifted || []);
     } catch (error: any) {
       console.error("Error fetching data:", error);
       toast.error(error.message || "Failed to fetch data");
@@ -287,6 +351,9 @@ const CompanyApprovalView = () => {
             <h3 className="text-xl font-semibold mb-4 text-white">
               New Listed Data ({newListedData.length})
             </h3>
+            <p className="text-sm text-muted-foreground mb-4 text-white/70">
+              Companies pending approval (these are also included in Nonshifted count)
+            </p>
             {newListedData.length === 0 ? (
               <Card>
                 <CardContent className="py-8 text-center text-muted-foreground text-white">

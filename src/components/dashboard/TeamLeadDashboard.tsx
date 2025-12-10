@@ -18,6 +18,7 @@ import {
   Trash2,
   LogIn,
   ArrowLeft,
+  Search,
 } from "lucide-react";
 import DashboardLayout from "./DashboardLayout";
 import AssignedDataView from "./views/AssignedDataView";
@@ -34,6 +35,7 @@ import EmployeeDataOverviewView from "./views/EmployeeDataOverviewView";
 import RecycleBinView from "./views/RecycleBinView";
 import TeamLeadEmployeeView from "./views/TeamLeadEmployeeView";
 import EmployeeDashboard from "./EmployeeDashboard";
+import SearchDataView from "./views/SearchDataView";
 import { Button } from "@/components/ui/button";
 
 interface TeamLeadDashboardProps {
@@ -104,7 +106,8 @@ const TeamLeadDashboard = ({ user }: TeamLeadDashboardProps) => {
       counts.today = todayCount;
 
       // Fetch category counts (companies with latest comment in each category)
-      const categories = ["follow_up", "hot", "block", "general"];
+      // Note: Handle "block" (Inactive Pool) separately to mirror BlockDataView filtering
+      const categories = ["follow_up", "hot", "general"];
 
       for (const category of categories) {
         let categoryCount = 0;
@@ -135,11 +138,106 @@ const TeamLeadDashboard = ({ user }: TeamLeadDashboardProps) => {
         const categoryMap: Record<string, string> = {
           follow_up: "followup",
           hot: "hot",
-          block: "block",
           general: "general",
         };
         counts[categoryMap[category]] = categoryCount;
       }
+
+      // --- Block / Inactive Pool count (matches BlockDataView filtering) ---
+      let blockCount = 0;
+
+      // Companies in inactive pool
+      const { data: blockCompanies } = await supabase
+        .from("companies")
+        .select(`
+          id,
+          deletion_state,
+          comments (id, category, created_at)
+        `)
+        .eq("assigned_to_id", user.id)
+        .is("deleted_at", null);
+
+      if (blockCompanies) {
+        blockCount += blockCompanies.filter((company: any) => {
+          const deletionState = (company as any).deletion_state;
+
+          // Exclude items moved to recycle bins
+          if (deletionState === "team_lead_recycle" || deletionState === "admin_recycle") return false;
+
+          // Show items with deletion_state='inactive'
+          if (deletionState === "inactive") return true;
+
+          // If other deletion_state values exist, exclude
+          if (deletionState) return false;
+
+          // Otherwise, check latest comment for block
+          if (!company.comments || company.comments.length === 0) return false;
+          const sortedComments = [...company.comments].sort(
+            (a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          );
+          const latestComment = sortedComments[0];
+          return latestComment && latestComment.category === "block";
+        }).length;
+      }
+
+      // Facebook data in inactive pool
+      const { data: fbShares } = await (supabase
+        .from("facebook_data_shares" as any)
+        .select("facebook_data_id, employee_id, created_at")
+        .eq("employee_id", user.id) as any);
+
+      if (fbShares && fbShares.length > 0) {
+        const fbIds = fbShares.map((s: any) => s.facebook_data_id);
+
+        const { data: fbData } = await (supabase
+          .from("facebook_data" as any)
+          .select(`
+            id,
+            deletion_state
+          `)
+          .in("id", fbIds) as any);
+
+        let commentsMap = new Map();
+        const { data: fbComments } = await (supabase
+          .from("facebook_data_comments" as any)
+          .select("id, facebook_data_id, category, created_at")
+          .in("facebook_data_id", fbIds) as any);
+
+        if (fbComments) {
+          fbComments.forEach((comment: any) => {
+            if (!commentsMap.has(comment.facebook_data_id)) {
+              commentsMap.set(comment.facebook_data_id, []);
+            }
+            commentsMap.get(comment.facebook_data_id).push(comment);
+          });
+        }
+
+        if (fbData) {
+          blockCount += fbData.filter((fb: any) => {
+            const deletionState = fb.deletion_state;
+
+            // Exclude items moved to recycle bins
+            if (deletionState === "team_lead_recycle" || deletionState === "admin_recycle") return false;
+
+            // Show items with deletion_state='inactive'
+            if (deletionState === "inactive") return true;
+
+            // If other deletion_state values exist, exclude
+            if (deletionState) return false;
+
+            // Otherwise, check latest comment for block
+            const fbCommentList = commentsMap.get(fb.id) || [];
+            if (fbCommentList.length === 0) return false;
+            const sortedComments = [...fbCommentList].sort(
+              (a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+            );
+            const latestComment = sortedComments[0];
+            return latestComment && latestComment.category === "block";
+          }).length;
+        }
+      }
+
+      counts.block = blockCount;
 
       setCategoryCounts(counts);
     } catch (error) {
@@ -245,6 +343,7 @@ const TeamLeadDashboard = ({ user }: TeamLeadDashboardProps) => {
 
   const menuItems = [
     { id: "assigned", label: "Assigned Data", icon: LayoutDashboard, count: categoryCounts.assigned },
+    { id: "search", label: "Search Data", icon: Search },
     { id: "today", label: "Today Data", icon: Calendar, count: categoryCounts.today },
     { id: "followup", label: "Active Pool", icon: TrendingUp, count: categoryCounts.followup },
     { id: "hot", label: "Prime Pool", icon: Flame, count: categoryCounts.hot },
@@ -325,6 +424,7 @@ const TeamLeadDashboard = ({ user }: TeamLeadDashboardProps) => {
       onLogout={handleLogout}
     >
       {currentView === "assigned" && <AssignedDataView userId={user.id} userRole="team_lead" />}
+      {currentView === "search" && <SearchDataView />}
       {currentView === "today" && <TodayDataView userId={user.id} userRole="team_lead" />}
       {currentView === "followup" && <FollowUpDataView userId={user.id} userRole="team_lead" />}
       {currentView === "hot" && <HotDataView userId={user.id} userRole="team_lead" />}
@@ -338,7 +438,7 @@ const TeamLeadDashboard = ({ user }: TeamLeadDashboardProps) => {
         <TeamLeadEmployeeView teamLeadId={user.id} onLoginAsUser={handleLoginAsUser} />
       )}
       {currentView === "overview" && <EmployeeDataOverviewView userId={user.id} />}
-      {currentView === "recycle" && <RecycleBinView userRole="team_lead" userId={user.id} />}
+      {currentView === "recycle" && <RecycleBinView userRole="team_lead" />}
     </DashboardLayout>
   );
 };

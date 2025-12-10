@@ -27,6 +27,7 @@ const mapDbCategoryToDisplay = (dbCategory: string): string => {
     "follow_up": "active",
     "block": "inactive",
     "general": "general",
+    "paid": "paid",
     // Also handle if already in display format
     "prime": "prime",
     "active": "active",
@@ -41,7 +42,8 @@ const mapDisplayCategoryToDb = (displayCategory: string): string => {
     "prime": "hot",
     "active": "follow_up",
     "inactive": "block",
-    "general": "general"
+    "general": "general",
+    "paid": "paid"
   };
   return mapping[displayCategory] || displayCategory;
 };
@@ -64,6 +66,7 @@ const getCategoryIcon = (category: string) => {
     case 'active': return '📅';
     case 'inactive': return '🚫';
     case 'general': return '📋';
+    case 'paid': return '💰';
     default: return '📄';
   }
 };
@@ -75,6 +78,7 @@ const getCategoryDisplayName = (category: string): string => {
     case 'active': return 'Active Pool';
     case 'inactive': return 'Inactive Pool';
     case 'general': return 'General Data';
+    case 'paid': return 'Paid';
     default: return displayCategory.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
   }
 };
@@ -136,7 +140,7 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
     }
 
     // Validate category
-    const validCategories = ["active", "prime", "inactive", "general"];
+    const validCategories = ["active", "prime", "inactive", "general", "paid"];
     if (!validCategories.includes(category)) {
       toast.error("Please select a valid category");
       return;
@@ -151,7 +155,7 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
       const isCategoryChanging = lastCommentDisplayCategory && lastCommentDisplayCategory !== category;
       
       // Map display category name to database category name
-      const commentCategory = mapDisplayCategoryToDb(category) as "hot" | "follow_up" | "block" | "general";
+      const commentCategory = mapDisplayCategoryToDb(category) as "hot" | "follow_up" | "block" | "general" | "paid";
       
       const { error } = await supabase.from("comments").insert([
         {
@@ -165,7 +169,43 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
 
       if (error) {
         console.error("Error adding comment:", error);
+        console.error("Full error details:", JSON.stringify(error, null, 2));
+        
+        // Check if it's because "paid" category doesn't exist in enum
+        if (category === "paid" && (error.message?.includes("paid") || error.message?.includes("invalid input value") || error.code === "PGRST116")) {
+          toast.error(
+            "The 'paid' category is not available yet. Please run the migration: ADD_PAID_TO_COMMENT_CATEGORY.sql in Supabase SQL Editor.",
+            { duration: 10000 }
+          );
+          console.error("Migration required. Run: ADD_PAID_TO_COMMENT_CATEGORY.sql");
+          return;
+        }
+        
         throw error;
+      }
+
+      // If category is "paid", also update the company's is_paid field
+      if (category === "paid") {
+        const { error: updateError } = await supabase
+          .from("companies")
+          .update({
+            is_paid: true,
+            payment_date: commentDate ? new Date(commentDate).toISOString() : new Date().toISOString()
+          })
+          .eq("id", company.id);
+
+        if (updateError) {
+          // Log error but don't fail the comment insertion
+          console.warn("Could not update is_paid field:", updateError);
+          // Check if is_paid column doesn't exist
+          if (updateError.message?.includes("is_paid") || updateError.code === "PGRST204") {
+            toast.warning("Comment added, but payment status could not be updated. Please run the migration: 20250120000004_add_payment_status_to_companies.sql", {
+              duration: 8000
+            });
+          }
+        } else {
+          console.log("✅ Company marked as paid");
+        }
       }
 
       if (isCategoryChanging) {
@@ -179,6 +219,9 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
       setOpen(false);
       // Refresh the data
       onUpdate();
+      
+      // Dispatch event to refresh all views (especially PaidClientPoolView when marked as paid)
+      window.dispatchEvent(new CustomEvent('companyDataUpdated'));
     } catch (error: any) {
       console.error("Failed to add comment:", error);
       toast.error(error.message || "Failed to add comment");
@@ -196,64 +239,134 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
       const isInInactive = company.deletion_state === 'inactive' || 
         (lastComment && lastComment.category === 'block');
 
-      // For employees deleting from inactive section → move to team lead recycle (or admin if no team)
+      // For employees deleting from inactive section → move to team lead recycle (never admin)
       if (userRole === "employee" && isInInactive) {
-        let deletionState: 'team_lead_recycle' | 'admin_recycle' = 'admin_recycle';
-        let successMessage = "Company moved to Admin's recycle bin";
+        // Always route to team_lead_recycle when employee deletes from inactive pool
+        // This ensures data goes to team leader's recycle bin, not admin's
+        let deletionState: 'team_lead_recycle' | 'admin_recycle' = 'team_lead_recycle';
+        let successMessage = "Company moved to Team Lead's recycle bin";
+        let teamLeadFound = false;
 
-        // Try to get team lead ID for this employee
+        // Try to get team lead ID for this employee (for logging purposes)
         // Step 1: Get team_id from team_members
         const { data: teamMemberData, error: teamMemberError } = await (supabase
           .from("team_members" as any)
-          .select("team_id")
+          .select("team_id, employee_id")
           .eq("employee_id", userData.user.id)
           .maybeSingle() as any);
 
+        console.log("🔍 CompanyCard - Team member lookup (inactive delete):", { 
+          teamMemberData, 
+          teamMemberError, 
+          employeeId: userData.user.id,
+          hasTeamId: !!teamMemberData?.team_id
+        });
+
         if (!teamMemberError && teamMemberData && teamMemberData.team_id) {
           // Step 2: Get team_lead_id from teams table
+          // Try to read team data - employees might not have permission due to RLS
           const { data: teamData, error: teamError } = await (supabase
             .from("teams" as any)
-            .select("team_lead_id")
+            .select("team_lead_id, id, name")
             .eq("id", teamMemberData.team_id)
             .maybeSingle() as any);
 
-          if (!teamError && teamData && teamData.team_lead_id) {
-            // Employee has a team lead, move to team lead recycle
-            deletionState = 'team_lead_recycle';
-            successMessage = "Company moved to Team Lead's recycle bin";
+          console.log("🔍 CompanyCard - Team lookup (inactive delete):", { 
+            teamData, 
+            teamError: teamError?.message, 
+            teamErrorCode: teamError?.code,
+            teamId: teamMemberData.team_id,
+            hasTeamLeadId: !!teamData?.team_lead_id,
+            teamLeadId: teamData?.team_lead_id
+          });
+
+          if (teamError) {
+            console.error("❌ CompanyCard - Error reading team (likely RLS issue):", teamError);
+            // Data will still go to team_lead_recycle (not admin_recycle)
+            console.warn("⚠️ CompanyCard - Cannot read team data. Data will still go to team_lead_recycle.");
+          } else if (teamData) {
+            if (teamData.team_lead_id) {
+              // Employee has a team lead
+              teamLeadFound = true;
+              console.log("✅ CompanyCard - Found team lead (inactive delete):", teamData.team_lead_id);
+            } else {
+              console.warn("⚠️ CompanyCard - Team exists but has no team_lead_id set (data will still go to team_lead_recycle):", teamData.id);
+            }
+          } else {
+            console.warn("⚠️ CompanyCard - Team not found or no access (data will still go to team_lead_recycle):", teamMemberData.team_id);
           }
+        } else {
+          console.warn("⚠️ CompanyCard - Employee not in any team (data will still go to team_lead_recycle, not admin_recycle)");
+        }
+        
+        console.log("✅ CompanyCard - Employee deletion from inactive pool will go to team_lead_recycle (not admin_recycle)");
+
+        // Ensure there's a "block" comment to preserve the category in recycle bin
+        // Check if there's already a "block" comment
+        const hasBlockComment = company.comments && company.comments.some((c: any) => c.category === 'block');
+        
+        console.log("🔍 CompanyCard - Checking for block comment:", {
+          companyId: company.id,
+          hasComments: !!company.comments,
+          commentsCount: company.comments?.length || 0,
+          hasBlockComment
+        });
+        
+        if (!hasBlockComment) {
+          // Add a "block" comment to preserve the inactive category
+          console.log("📝 CompanyCard - Adding 'block' comment to preserve inactive category for company:", company.id);
+          const { data: insertedComment, error: commentError } = await (supabase
+            .from("comments")
+            .insert({
+              company_id: company.id,
+              user_id: userData.user.id,
+              comment_text: "Moved from Inactive Pool to Recycle Bin",
+              category: "block"
+            })
+            .select() as any);
+          
+          if (commentError) {
+            console.error("❌ CompanyCard - Failed to add block comment:", commentError);
+            toast.error("Warning: Could not add category comment. Category may not display correctly in recycle bin.");
+            // Continue with deletion even if comment addition fails
+          } else {
+            console.log("✅ CompanyCard - Successfully added 'block' comment:", insertedComment);
+          }
+        } else {
+          console.log("✅ CompanyCard - Block comment already exists, skipping insertion");
         }
 
-        // If no team lead found, it will go to admin_recycle (default)
-        const { error } = await (supabase
+        // Update deletion_state to move to recycle bin
+        const updateData = {
+          deletion_state: deletionState as any,
+          deleted_at: new Date().toISOString(),
+          deleted_by_id: userData.user.id
+        };
+        
+        console.log("💾 CompanyCard - Updating company (inactive delete):", { id: company.id, updateData, teamLeadFound });
+
+        const { error, data: updatedData } = await (supabase
           .from("companies")
-          .update({
-            deletion_state: deletionState as any,
-            deleted_at: new Date().toISOString(),
-            deleted_by_id: userData.user.id
-          } as any)
+          .update(updateData as any)
           .eq("id", company.id)
           .select() as any);
 
         if (error) {
           console.error("Error moving to recycle bin:", error);
-          // Fallback if deletion_state column doesn't exist
-          if (error.message?.includes("deletion_state")) {
-            const { error: fallbackError } = await supabase
-              .from("companies")
-              .update({
-                deleted_at: new Date().toISOString(),
-                deleted_by_id: userData.user.id
-              })
-              .eq("id", company.id);
-            
-            if (fallbackError) {
-              console.error("Fallback update error:", fallbackError);
-              throw fallbackError;
-            }
-          } else {
-            throw error;
+          
+          // Check if deletion_state column doesn't exist (migration not run)
+          if (error.message?.includes("deletion_state") || 
+              error.message?.includes("deleted_at") ||
+              error.message?.includes("deleted_by_id") ||
+              error.code === "PGRST204") {
+            toast.error(
+              "Database migration not applied. Please run the migration: 20250120000002_add_deletion_state.sql in Supabase SQL Editor.",
+              { duration: 10000 }
+            );
+            return;
           }
+          
+          throw error;
         }
 
         // Dispatch event to refresh all views
@@ -631,6 +744,11 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
                         <SelectItem value="general">
                           <span className="flex items-center gap-2">
                             {getCategoryIcon('general')} General Data
+                          </span>
+                        </SelectItem>
+                        <SelectItem value="paid">
+                          <span className="flex items-center gap-2">
+                            {getCategoryIcon('paid')} Paid
                           </span>
                         </SelectItem>
                       </SelectContent>

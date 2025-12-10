@@ -28,6 +28,7 @@ const DataRequestsView = () => {
   const [totalFacebookDataCount, setTotalFacebookDataCount] = useState(0);
   const [alreadySharedCount, setAlreadySharedCount] = useState(0);
   const [alreadySharedIds, setAlreadySharedIds] = useState<Set<number>>(new Set());
+  const [sharedDataMap, setSharedDataMap] = useState<Map<number, any>>(new Map());
 
   useEffect(() => {
     fetchRequests();
@@ -81,14 +82,16 @@ const DataRequestsView = () => {
         data: allData
       });
 
-      // Get already shared data for this employee to mark (not filter out)
-      const { data: sharedData, error: sharesError } = await (supabase
+      // Get already shared data for ANY employee (to show what's already been shared)
+      // First fetch shares without join to avoid foreign key issues
+      const { data: sharesData, error: sharesError } = await (supabase
         .from("facebook_data_shares" as any)
-        .select("facebook_data_id")
-        .eq("employee_id", requestToUse.requested_by_id) as any);
-
-      // Get IDs of already shared data (for marking, not filtering)
+        .select("facebook_data_id, employee_id, shared_by_id, created_at")
+        .order("created_at", { ascending: false }) as any);
+      
+      // Get IDs of already shared data (shared with ANY employee, not just this one)
       let sharedIds = new Set<number>();
+      let sharedDataMap = new Map<number, any>(); // Map of facebook_data_id -> share info
       
       if (sharesError) {
         if (sharesError.code === "PGRST205") {
@@ -100,8 +103,48 @@ const DataRequestsView = () => {
           // Continue anyway - assume no shares if we can't check
           sharedIds = new Set<number>();
         }
-      } else {
-        sharedIds = new Set((sharedData || []).map((s: any) => Number(s.facebook_data_id)));
+      } else if (sharesData && sharesData.length > 0) {
+        // Fetch profiles separately to get employee names
+        const sharedByIds = [...new Set(sharesData.map((s: any) => s.shared_by_id).filter(Boolean))];
+        const employeeIds = [...new Set(sharesData.map((s: any) => s.employee_id).filter(Boolean))];
+        const allProfileIds = [...new Set([...sharedByIds, ...employeeIds])];
+        
+        let profilesMap = new Map();
+        if (allProfileIds.length > 0) {
+          const { data: profiles } = await supabase
+            .from("profiles")
+            .select("id, display_name, email")
+            .in("id", allProfileIds);
+          
+          if (profiles) {
+            profiles.forEach((profile: any) => {
+              profilesMap.set(profile.id, profile);
+            });
+          }
+        }
+        
+        // Get all unique facebook_data_ids that have been shared with ANY employee
+        const uniqueSharedIds = new Set<number>();
+        sharesData.forEach((share: any) => {
+          const fbId = Number(share.facebook_data_id);
+          uniqueSharedIds.add(fbId);
+          // Store the first share info for each facebook_data_id (most recent)
+          if (!sharedDataMap.has(fbId)) {
+            sharedDataMap.set(fbId, {
+              ...share,
+              shared_by: share.shared_by_id ? profilesMap.get(share.shared_by_id) : null,
+              employee: share.employee_id ? profilesMap.get(share.employee_id) : null
+            });
+          }
+        });
+        sharedIds = uniqueSharedIds;
+        
+        console.log("📋 Already shared data:", {
+          totalShares: sharesData.length,
+          uniqueFacebookDataIds: sharedIds.size,
+          sharedIds: Array.from(sharedIds),
+          sharedDataMap: Object.fromEntries(sharedDataMap)
+        });
       }
       
       // Show ALL Facebook data (not filtered)
@@ -123,6 +166,7 @@ const DataRequestsView = () => {
       setTotalFacebookDataCount(totalCount);
       setAlreadySharedCount(sharedCount);
       setAlreadySharedIds(sharedIds);
+      setSharedDataMap(sharedDataMap);
       // Show ALL data, not filtered
       setAvailableFacebookData(allFacebookData);
       
@@ -175,6 +219,7 @@ const DataRequestsView = () => {
       setTotalFacebookDataCount(0);
       setAlreadySharedCount(0);
       setAlreadySharedIds(new Set());
+      setSharedDataMap(new Map());
       setLoadingFacebookData(true);
       
       // Open dialog first so it can show loading state
@@ -298,6 +343,11 @@ const DataRequestsView = () => {
             `Request approved and ${sharedCount} Facebook data ${sharedCount === 1 ? 'entry' : 'entries'} shared successfully!`
           );
         }
+        
+        // Dispatch event to notify dashboards to refresh
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event("facebookDataUpdated"));
+        }
       }
 
       setShareDialogOpen(false);
@@ -306,6 +356,8 @@ const DataRequestsView = () => {
       setAvailableFacebookData([]);
       setTotalFacebookDataCount(0);
       setAlreadySharedCount(0);
+      setAlreadySharedIds(new Set());
+      setSharedDataMap(new Map());
       fetchRequests();
     } catch (error: any) {
       console.error("Error sharing Facebook data:", error);
@@ -346,10 +398,12 @@ const DataRequestsView = () => {
       if (updateError) throw updateError;
 
       // 2) Fetch the first batch of unassigned companies (oldest first)
+      // Also check that assigned_at is null to avoid companies with stale timestamps
       const { data: unassignedCompanies, error: companiesError } = await supabase
         .from("companies")
         .select("id")
         .is("assigned_to_id", null)
+        .is("assigned_at", null)
         .is("deleted_at", null)
         .order("created_at", { ascending: true })
         .limit(GENERAL_ASSIGNMENT_BATCH_SIZE);
@@ -357,35 +411,121 @@ const DataRequestsView = () => {
       if (companiesError) throw companiesError;
 
       const companiesToAssign = unassignedCompanies || [];
+      const nowIso = new Date().toISOString();
 
-      if (companiesToAssign.length === 0) {
-        toast.warning("Request approved but no unassigned companies were available to assign.");
+      // 3) Also refresh timestamps for companies already assigned to this employee with old timestamps
+      // This ensures that when admin approves, existing assignments get refreshed too
+      const { data: existingAssignments, error: existingError } = await supabase
+        .from("companies")
+        .select("id, assigned_at")
+        .eq("assigned_to_id", request.requested_by_id)
+        .is("deleted_at", null)
+        .not("assigned_at", "is", null);
+
+      let companiesToRefresh: string[] = [];
+      if (!existingError && existingAssignments) {
+        const now = Date.now();
+        const twentyFourHoursAgo = now - (24 * 60 * 60 * 1000);
+        
+        // Find companies with timestamps older than 24 hours
+        companiesToRefresh = existingAssignments
+          .filter((c: any) => {
+            if (!c.assigned_at) return false;
+            const assignedTime = new Date(c.assigned_at).getTime();
+            return assignedTime < twentyFourHoursAgo;
+          })
+          .map((c: any) => c.id);
+      }
+
+      const allCompanyIds = [
+        ...companiesToAssign.map((c: any) => c.id),
+        ...companiesToRefresh
+      ];
+
+      if (allCompanyIds.length === 0) {
+        toast.warning("Request approved but no companies were available to assign or refresh.");
         fetchRequests();
         return;
       }
 
-      const companyIds = companiesToAssign.map((c: any) => c.id);
-      const nowIso = new Date().toISOString();
+      console.log("📋 Assigning/refreshing companies:", {
+        newAssignments: companiesToAssign.length,
+        refreshCount: companiesToRefresh.length,
+        total: allCompanyIds.length,
+        employeeId: request.requested_by_id,
+        employeeName: request.requested_by?.display_name,
+        assignedAt: nowIso,
+        companyIds: allCompanyIds.slice(0, 5) // Log first 5 IDs
+      });
 
-      // 3) Assign the companies to the requesting employee
-      const { error: assignError } = await supabase
+      // 4) Assign new companies and refresh timestamps for existing ones
+      // Always set a fresh assigned_at timestamp to ensure they're not filtered as outdated
+      const { data: updatedCompanies, error: assignError } = await supabase
         .from("companies")
-        .update({ assigned_to_id: request.requested_by_id, assigned_at: nowIso })
-        .in("id", companyIds);
+        .update({ 
+          assigned_to_id: request.requested_by_id, 
+          assigned_at: nowIso 
+        })
+        .in("id", allCompanyIds)
+        .select("id, assigned_at, assigned_to_id");
 
-      if (assignError) throw assignError;
+      if (assignError) {
+        console.error("❌ Error assigning companies:", assignError);
+        throw assignError;
+      }
 
-      const assignedCount = companyIds.length;
-      toast.success(
-        `Request approved and ${assignedCount} compan${assignedCount === 1 ? "y" : "ies"} assigned to ${
+      console.log("✅ Companies assigned successfully:", {
+        count: updatedCompanies?.length || 0,
+        sample: updatedCompanies?.[0],
+        allAssignedAt: updatedCompanies?.map((c: any) => c.assigned_at)
+      });
+
+      // Verify that all companies were updated with fresh timestamps
+      const nowTime = Date.now();
+      const staleCompanies = updatedCompanies?.filter((c: any) => {
+        if (!c.assigned_at) return true;
+        const assignedTime = new Date(c.assigned_at).getTime();
+        const diffMinutes = (nowTime - assignedTime) / (1000 * 60);
+        return diffMinutes > 1; // More than 1 minute old
+      });
+
+      if (staleCompanies && staleCompanies.length > 0) {
+        console.warn("⚠️ Some companies have stale assigned_at timestamps:", staleCompanies);
+      }
+
+      const newAssignedCount = companiesToAssign.length;
+      const refreshedCount = companiesToRefresh.length;
+      
+      let successMessage = "";
+      if (newAssignedCount > 0 && refreshedCount > 0) {
+        successMessage = `Request approved: ${newAssignedCount} new compan${newAssignedCount === 1 ? "y" : "ies"} assigned and ${refreshedCount} existing assignment${refreshedCount === 1 ? "" : "s"} refreshed for ${
           request.requested_by?.display_name || "employee"
-        }.`
-      );
+        }.`;
+      } else if (newAssignedCount > 0) {
+        successMessage = `Request approved and ${newAssignedCount} compan${newAssignedCount === 1 ? "y" : "ies"} assigned to ${
+          request.requested_by?.display_name || "employee"
+        }.`;
+      } else if (refreshedCount > 0) {
+        successMessage = `Request approved: ${refreshedCount} existing assignment${refreshedCount === 1 ? "" : "s"} refreshed for ${
+          request.requested_by?.display_name || "employee"
+        }.`;
+      }
+      
+      toast.success(successMessage);
 
       // 4) Notify dashboards to refresh company-related counts
+      // Add a delay to ensure database update is fully committed and visible
+      // Dispatch multiple times to ensure it's caught even if the employee dashboard is in a different tab
+      setTimeout(() => {
       if (typeof window !== "undefined") {
+          console.log("📢 Dispatching companyDataUpdated event for employee:", request.requested_by_id);
         window.dispatchEvent(new Event("companyDataUpdated"));
+          // Dispatch again after a short delay to ensure it's caught
+          setTimeout(() => {
+            window.dispatchEvent(new Event("companyDataUpdated"));
+          }, 1000);
       }
+      }, 1000);
 
       // 5) Refresh the requests list
       fetchRequests();
@@ -655,53 +795,62 @@ const DataRequestsView = () => {
                             </div>
                             {availableFacebookData
                               .filter((item: any) => alreadySharedIds.has(item.id))
-                              .map((item: any) => (
-                                <div
-                                  key={item.id}
-                                  className="flex items-center gap-4 p-4 border-2 rounded-lg bg-muted/30 border-muted opacity-60 cursor-not-allowed"
-                                >
-                                  <div className="flex-shrink-0">
-                                    <Checkbox
-                                      checked={false}
-                                      disabled={true}
-                                    />
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-start justify-between gap-4">
-                                      <div className="flex-1 min-w-0">
-                                        <p className="font-semibold text-base mb-1 truncate text-white">
-                                          {item.company_name || item.name || "Unknown"}
-                                        </p>
-                                        <div className="flex items-center gap-4 text-sm">
-                                          {item.email && (
-                                            <p className="text-white/80 truncate">
-                                              {item.email}
-                                            </p>
-                                          )}
-                                          {item.phone && (
-                                            <p className="text-white/80 truncate">
-                                              {item.phone}
-                                            </p>
-                                          )}
-                                          {item.created_at && (
-                                            <p className="text-xs text-white/70 whitespace-nowrap">
-                                              {new Date(item.created_at).toLocaleDateString()}
+                              .map((item: any) => {
+                                const shareInfo = sharedDataMap.get(item.id);
+                                const sharedWithEmployee = shareInfo?.shared_by?.display_name || shareInfo?.shared_by?.email || "an employee";
+                                return (
+                                  <div
+                                    key={item.id}
+                                    className="flex items-center gap-4 p-4 border-2 rounded-lg bg-muted/30 border-muted opacity-60 cursor-not-allowed"
+                                  >
+                                    <div className="flex-shrink-0">
+                                      <Checkbox
+                                        checked={false}
+                                        disabled={true}
+                                      />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-start justify-between gap-4">
+                                        <div className="flex-1 min-w-0">
+                                          <p className="font-semibold text-base mb-1 truncate text-white">
+                                            {item.company_name || item.name || "Unknown"}
+                                          </p>
+                                          <div className="flex items-center gap-4 text-sm">
+                                            {item.email && (
+                                              <p className="text-white/80 truncate">
+                                                {item.email}
+                                              </p>
+                                            )}
+                                            {item.phone && (
+                                              <p className="text-white/80 truncate">
+                                                {item.phone}
+                                              </p>
+                                            )}
+                                            {item.created_at && (
+                                              <p className="text-xs text-white/70 whitespace-nowrap">
+                                                {new Date(item.created_at).toLocaleDateString()}
+                                              </p>
+                                            )}
+                                          </div>
+                                          {shareInfo && (
+                                            <p className="text-xs text-yellow-400 mt-1">
+                                              Already shared with: {sharedWithEmployee}
                                             </p>
                                           )}
                                         </div>
-                                      </div>
-                                      <div className="flex items-center gap-2 flex-shrink-0">
-                                        <Badge variant="outline" className="text-xs font-mono text-white border-white/30">
-                                          ID: {item.id}
-                                        </Badge>
-                                        <Badge variant="secondary" className="text-xs bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                                          Already Shared
-                                        </Badge>
+                                        <div className="flex items-center gap-2 flex-shrink-0">
+                                          <Badge variant="outline" className="text-xs font-mono text-white border-white/30">
+                                            ID: {item.id}
+                                          </Badge>
+                                          <Badge variant="secondary" className="text-xs bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                                            Already Shared
+                                          </Badge>
+                                        </div>
                                       </div>
                                     </div>
                                   </div>
-                                </div>
-                              ))}
+                                );
+                              })}
                           </>
                         )}
                       </>

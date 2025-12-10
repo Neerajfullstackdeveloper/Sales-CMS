@@ -427,7 +427,7 @@ const GeneralDataView = ({ userId, userRole }: GeneralDataViewProps) => {
         </div>
         {(companies.length > 0 || facebookData.length > 0) && (
           <div className="px-4 py-2 bg-primary/10 rounded-full">
-            <span className="text-sm font-semibold text-primary">{companies.length + facebookData.length} {companies.length + facebookData.length === 1 ? 'item' : 'items'}</span>
+            <span className="text-sm font-semibold text-primary text-white/70">{companies.length + facebookData.length} {companies.length + facebookData.length === 1 ? 'item' : 'items'}</span>
           </div>
         )}
       </div>
