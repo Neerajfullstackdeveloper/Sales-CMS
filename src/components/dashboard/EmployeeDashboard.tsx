@@ -52,28 +52,41 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
       // Initialize assigned count to 0 to prevent stale data
       counts.assigned = 0;
 
+      // Use the user.id prop directly (this is the employee's ID when viewing as team lead)
+      // The AssignedDataView also uses userId prop, but falls back to authUser if there's a mismatch
+      // For count calculation, we should use the same userId that AssignedDataView will use
+      // When team lead views employee dashboard, user.id is the employee's ID from mockUser
+      const countUserId = user.id;
+
       // Fetch assigned companies count (without comments, within 24 hours)
-      // Match the exact filtering logic from AssignedDataView
-      // IMPORTANT: Apply the same limit(100) as the view to get accurate count
+      // Match the EXACT filtering logic from AssignedDataView.fetchAssignedCompanies
+      // IMPORTANT: Use the same query structure, ordering, limit, and user ID as the view
       const { data: assignedCompanies } = await supabase
         .from("companies")
         .select(`
           id,
           assigned_at,
           deletion_state,
-          comments (id)
+          comments (
+            id,
+            comment_text,
+            category,
+            comment_date,
+            created_at,
+            user_id
+          )
         `)
-        .eq("assigned_to_id", user.id)
+        .eq("assigned_to_id", countUserId) // Use the employee's ID (from user prop)
         .is("deleted_at", null)
-        .order("assigned_at", { ascending: false, nullsLast: true })
-        .limit(100); // Match the view's limit and ordering to get accurate count
+        .order("assigned_at", { ascending: false, nullsFirst: false }) // Match view's ordering exactly
+        .limit(100); // Match the view's limit to get accurate count
 
       let companyCount = 0;
       if (assignedCompanies) {
         const now = Date.now();
         const totalBeforeFilter = assignedCompanies.length;
         
-        // Apply the exact same filtering logic as AssignedDataView
+        // Apply the exact same filtering logic as AssignedDataView.fetchAssignedCompanies
         // Step 1: Filter out companies with deletion_state
         let filteredData = assignedCompanies.filter((company: any) => !company.deletion_state);
         const afterDeletionStateFilter = filteredData.length;
@@ -98,11 +111,26 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
         });
         const afterTimeFilter = validCompanies.length;
         
-        // Step 3: For employees, filter out companies with comments (already categorized)
-        // Employees should only see uncategorized companies in Assigned Data
-        companyCount = validCompanies.filter((company: any) => {
+        // Step 3: Sort comments the same way as the view does
+        const companiesWithSortedComments = validCompanies.map((company) => ({
+          ...company,
+          comments:
+            company.comments && company.comments.length > 0
+              ? [...company.comments].sort(
+                  (a: any, b: any) =>
+                    new Date(b.created_at).getTime() -
+                    new Date(a.created_at).getTime()
+                )
+              : [],
+        }));
+        
+        // Step 4: For employees, filter out companies with comments (already categorized)
+        // This matches AssignedDataView line 360-371 - employees see only uncategorized companies
+        // Note: When team lead views employee dashboard, userRole is "employee", so this filter applies
+        companyCount = companiesWithSortedComments.filter((company: any) => {
           // Keep only companies with no comments (uncategorized)
-          return !company.comments || company.comments.length === 0;
+          const hasComments = company.comments && company.comments.length > 0;
+          return !hasComments;
         }).length;
         
         console.log("📊 Assigned Data Count Calculation (Companies):", {
@@ -111,7 +139,13 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
           afterTimeFilter,
           companyCount,
           filteredOutByTime: afterDeletionStateFilter - afterTimeFilter,
-          filteredOutByComments: afterTimeFilter - companyCount
+          filteredOutByComments: afterTimeFilter - companyCount,
+          sampleCompanies: companiesWithSortedComments.slice(0, 5).map((c: any) => ({
+            id: c.id,
+            company_name: c.company_name,
+            hasComments: c.comments && c.comments.length > 0,
+            commentCount: c.comments?.length || 0
+          }))
         });
       }
 

@@ -187,8 +187,10 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
     // Get current authenticated user to verify
     const { data: { user: authUser } } = await supabase.auth.getUser();
     
-    // Use authenticated user ID if prop doesn't match (fixes user ID mismatch issue)
-    const effectiveUserId = authUser?.id || userId;
+    // When viewing as team lead/admin, userId prop is the employee's ID we want to view
+    // Always use the userId prop when provided (this is correct for team lead viewing employee dashboards)
+    // Only fall back to authUser if userId prop is not provided
+    const effectiveUserId = userId || authUser?.id;
     
     console.log("🔍 AssignedDataView - Fetching assigned companies:", {
       userIdProp: userId,
@@ -196,12 +198,13 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
       authenticatedUserId: authUser?.id,
       effectiveUserId,
       userIdMatches: userId === authUser?.id,
+      isViewingAsDifferentUser: userId && userId !== authUser?.id,
       twentyFourHoursAgo,
       now: new Date().toISOString()
     });
     
-    if (userId !== authUser?.id) {
-      console.warn("⚠️ WARNING: userId prop doesn't match authenticated user! Using authenticated user ID instead.");
+    if (userId && userId !== authUser?.id) {
+      console.log("ℹ️ INFO: Viewing employee dashboard - using employee's userId prop:", userId);
     }
     
     // First, let's check if there are ANY companies assigned to this user (without time filter)
@@ -227,7 +230,9 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
       error: checkError?.message
     });
     
-    // Optimized query: only fetch latest comment per company, filter in database
+    // Fetch companies with comments join
+    // With updated RLS policies (migrations 20250120000010 and 20250120000011),
+    // team leads and admins can view companies and comments assigned to team members
     const query = supabase
       .from("companies")
       .select(`
