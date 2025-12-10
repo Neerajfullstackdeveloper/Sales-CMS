@@ -68,6 +68,7 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
         .order("assigned_at", { ascending: false, nullsLast: true })
         .limit(100); // Match the view's limit and ordering to get accurate count
 
+      let companyCount = 0;
       if (assignedCompanies) {
         const now = Date.now();
         const totalBeforeFilter = assignedCompanies.length;
@@ -99,24 +100,28 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
         
         // Step 3: For employees, filter out companies with comments (already categorized)
         // Employees should only see uncategorized companies in Assigned Data
-        const finalCount = validCompanies.filter((company: any) => {
+        companyCount = validCompanies.filter((company: any) => {
           // Keep only companies with no comments (uncategorized)
           return !company.comments || company.comments.length === 0;
         }).length;
         
-        console.log("📊 Assigned Data Count Calculation:", {
+        console.log("📊 Assigned Data Count Calculation (Companies):", {
           totalBeforeFilter,
           afterDeletionStateFilter,
           afterTimeFilter,
-          finalCount,
+          companyCount,
           filteredOutByTime: afterDeletionStateFilter - afterTimeFilter,
-          filteredOutByComments: afterTimeFilter - finalCount
+          filteredOutByComments: afterTimeFilter - companyCount
         });
-        
-        counts.assigned = finalCount;
-      } else {
-        counts.assigned = 0;
       }
+
+      // Assigned count only includes companies (Facebook data is not shown in Assigned Data section)
+      counts.assigned = companyCount;
+      
+      console.log("📊 Assigned Data Total Count:", {
+        companyCount,
+        total: counts.assigned
+      });
 
       // Fetch Facebook data count (shared to employee, without comments)
       const { data: shares } = await (supabase

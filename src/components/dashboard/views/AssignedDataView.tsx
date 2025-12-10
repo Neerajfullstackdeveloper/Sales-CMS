@@ -4,7 +4,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import CompanyCard from "@/components/CompanyCard";
-import FacebookDataCard from "./FacebookDataCard";
 import { Loader2, UserCheck, Inbox } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -16,7 +15,6 @@ interface AssignedDataViewProps {
 
 const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
   const [companies, setCompanies] = useState<any[]>([]);
-  const [facebookData, setFacebookData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -29,13 +27,12 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
       if (stored) {
         try {
           const parsed = JSON.parse(stored);
-          if (parsed?.companies && parsed?.facebookData && parsed?.timestamp) {
+          if (parsed?.companies && parsed?.timestamp) {
             const cacheAge = Date.now() - parsed.timestamp;
             // Use cache if less than 2 minutes old
             if (cacheAge < 120000) {
               if (isMounted) {
                 setCompanies(parsed.companies || []);
-                setFacebookData(parsed.facebookData || []);
                 setLoading(false);
               }
               // Only refresh in background if tab is visible and not recently fetched
@@ -143,82 +140,45 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
       }
     };
 
-    const handleFacebookDataUpdate = () => {
-      console.log("🔄 AssignedDataView - Received facebookDataUpdated event, refreshing...", {
-        userId,
-        isMounted,
-        hasFetched
-      });
-      // Clear cache and refresh immediately when data is updated
-      localStorage.removeItem(`assignedData_${userId}`);
-      // Force refresh even if currently fetching
-      if (isMounted) {
-        hasFetched = true;
-        // Add a longer delay to ensure database update is committed and visible
-        setTimeout(() => {
-          console.log("🔄 AssignedDataView - Executing refresh after facebookDataUpdated event");
-          fetchAssignedData().finally(() => {
-            hasFetched = false;
-            console.log("✅ AssignedDataView - Refresh completed after facebookDataUpdated event");
-          });
-        }, 800);
-        
-        // Also try again after a longer delay as a fallback
-        setTimeout(() => {
-          if (isMounted) {
-            console.log("🔄 AssignedDataView - Executing second refresh attempt after facebookDataUpdated event");
-            fetchAssignedData();
-          }
-        }, 2000);
-      }
-    };
-
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("companyDataUpdated", handleCompanyDataUpdate);
-    window.addEventListener("facebookDataUpdated", handleFacebookDataUpdate);
 
     return () => {
       isMounted = false;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("companyDataUpdated", handleCompanyDataUpdate);
-      window.removeEventListener("facebookDataUpdated", handleFacebookDataUpdate);
     };
   }, [userId]);
 
   const fetchAssignedData = async () => {
     setLoading(true);
     
-    // Fetch both companies and Facebook data in parallel
-    await Promise.all([
-      fetchAssignedCompanies(),
-      fetchAssignedFacebookData()
-    ]);
+    // Fetch only companies (Facebook data is not shown in Assigned Data section)
+    await fetchAssignedCompanies();
     
     setLoading(false);
   };
   
-  // Save to cache whenever companies or facebookData changes
+  // Save to cache whenever companies changes
   useEffect(() => {
-    if (companies.length > 0 || facebookData.length > 0) {
+    if (companies.length > 0) {
       localStorage.setItem(
         `assignedData_${userId}`,
         JSON.stringify({
           timestamp: Date.now(),
           companies: companies,
-          facebookData: facebookData,
         })
       );
       
       // Automatically clear from UI and localStorage after 15 mins
       const timeoutId = setTimeout(() => {
         setCompanies([]);
-        setFacebookData([]);
         localStorage.removeItem(`assignedData_${userId}`);
       }, 15 * 60 * 1000);
       
       return () => clearTimeout(timeoutId);
     }
-  }, [companies, facebookData, userId]);
+  }, [companies, userId]);
 
   const fetchAssignedCompanies = async () => {
     // Calculate 24 hours ago timestamp for database filtering
@@ -434,157 +394,6 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
     }
   };
 
-  const fetchAssignedFacebookData = async () => {
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    
-    // Get current authenticated user to use correct ID
-    const { data: { user: authUser } } = await supabase.auth.getUser();
-    const effectiveUserId = authUser?.id || userId;
-    
-    console.log("🔍 AssignedDataView - Fetching assigned Facebook data:", {
-      userIdProp: userId,
-      effectiveUserId,
-      now: new Date().toISOString(),
-      twentyFourHoursAgo
-    });
-
-    try {
-      // First, get shares for this employee within the last 24 hours
-      const { data: shares, error: sharesError } = await (supabase
-        .from("facebook_data_shares" as any)
-        .select("facebook_data_id, created_at")
-        .eq("employee_id", effectiveUserId)
-        .gte("created_at", twentyFourHoursAgo)
-        .order("created_at", { ascending: false }) as any);
-
-      console.log("📦 AssignedDataView - Facebook shares query result:", {
-        sharesCount: shares?.length || 0,
-        shares: shares,
-        error: sharesError?.message,
-        twentyFourHoursAgo
-      });
-
-      if (sharesError) {
-        console.error("❌ Error fetching Facebook data shares:", sharesError);
-        setFacebookData([]);
-        return;
-      }
-
-      if (!shares || shares.length === 0) {
-        console.log("ℹ️ No recent Facebook data shares found (within 24 hours)");
-        setFacebookData([]);
-        return;
-      }
-
-      // Get the Facebook data IDs
-      const fbIds = shares.map((s: any) => s.facebook_data_id);
-      const shareDateMap: Record<number, string> = {};
-      shares.forEach((share: any) => {
-        shareDateMap[share.facebook_data_id] = share.created_at;
-      });
-
-      // Fetch the actual Facebook data
-      const { data: fbData, error: fbError } = await (supabase
-        .from("facebook_data" as any)
-        .select("*")
-        .in("id", fbIds)
-        .is("deletion_state", null) as any);
-
-      if (fbError) {
-        console.error("Error fetching Facebook data:", fbError);
-        setFacebookData([]);
-        return;
-      }
-
-      if (!fbData || fbData.length === 0) {
-        setFacebookData([]);
-        return;
-      }
-
-      // Fetch comments for these Facebook data items
-      let commentsMap = new Map();
-      try {
-        const { data: comments } = await (supabase
-          .from("facebook_data_comments" as any)
-          .select("facebook_data_id")
-          .in("facebook_data_id", fbIds) as any);
-
-        if (comments) {
-          comments.forEach((comment: any) => {
-            if (!commentsMap.has(comment.facebook_data_id)) {
-              commentsMap.set(comment.facebook_data_id, []);
-            }
-            commentsMap.get(comment.facebook_data_id).push(comment);
-          });
-        }
-      } catch (commentsError) {
-        console.warn("Could not fetch comments:", commentsError);
-      }
-
-      // Filter out Facebook data with comments (for employees) or deletion_state
-      const now = Date.now();
-      const validFbData = fbData
-        .filter((item: any) => {
-          // Exclude items with deletion_state
-          if (item.deletion_state) {
-            console.log(`⏭️ Filtered out Facebook data ${item.id} - has deletion_state:`, item.deletion_state);
-            return false;
-          }
-          
-          // For employees: exclude items with comments (already categorized)
-          if (userRole !== "admin") {
-            const hasComments = commentsMap.has(item.id) && commentsMap.get(item.id).length > 0;
-            if (hasComments) {
-              console.log(`⏭️ Filtered out Facebook data ${item.id} - has comments (already categorized)`);
-              return false;
-            }
-          }
-          
-          // Filter by 24 hours using share date
-          const shareDate = shareDateMap[item.id];
-          if (!shareDate) {
-            console.log(`⏭️ Filtered out Facebook data ${item.id} - no share date found`);
-            return false;
-          }
-          
-          const shareTime = new Date(shareDate).getTime();
-          const hoursSinceShare = (now - shareTime) / (1000 * 60 * 60);
-          if (hoursSinceShare >= 24) {
-            console.log(`⏭️ Filtered out Facebook data ${item.id} - older than 24 hours (${hoursSinceShare.toFixed(2)} hours)`);
-            return false;
-          }
-          
-          console.log(`✅ Including Facebook data ${item.id} - shared ${hoursSinceShare.toFixed(2)} hours ago`);
-          return true;
-        })
-        .map((item: any) => ({
-          ...item,
-          shared_at: shareDateMap[item.id],
-          comments: commentsMap.get(item.id) || [],
-        }))
-        .sort((a: any, b: any) => {
-          // Sort by share date (most recent first)
-          const aTime = new Date(a.shared_at).getTime();
-          const bTime = new Date(b.shared_at).getTime();
-          return bTime - aTime;
-        });
-
-      console.log("✅ AssignedDataView - Final filtered Facebook data:", {
-        totalCount: validFbData.length,
-        top5: validFbData.slice(0, 5).map((fb: any) => ({
-          id: fb.id,
-          name: fb.name,
-          shared_at: fb.shared_at,
-          hasComments: fb.comments && fb.comments.length > 0,
-        }))
-      });
-
-      setFacebookData(validFbData);
-    } catch (error) {
-      console.error("Error in fetchAssignedFacebookData:", error);
-      setFacebookData([]);
-    }
-  };
 
   const CompanyCardSkeleton = () => (
     <Card>
@@ -638,19 +447,19 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
           <div>
             <h2 className="text-3xl font-bold tracking-tight text-white">Assigned Data</h2>
             <p className="text-sm text-muted-foreground mt-1 text-white">
-              Companies and Facebook data assigned to you (auto-unassigned after 24 hours)
+              Companies assigned to you (auto-unassigned after 24 hours)
             </p>
           </div>
         </div>
-        {(companies.length > 0 || facebookData.length > 0) && (
+        {companies.length > 0 && (
           <div className="px-4 py-2 bg-primary/10 rounded-full">
             <span className="text-sm font-semibold text-primary text-white">
-              {companies.length + facebookData.length} {companies.length + facebookData.length === 1 ? 'item' : 'items'}
+              {companies.length} {companies.length === 1 ? 'item' : 'items'}
             </span>
           </div>
         )}
       </div>
-      {companies.length === 0 && facebookData.length === 0 ? (
+      {companies.length === 0 ? (
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-16">
             <div className="p-4 bg-muted rounded-full mb-4">
@@ -658,7 +467,7 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
             </div>
             <h3 className="text-lg font-semibold mb-2">No assigned data</h3>
             <p className="text-sm text-muted-foreground text-center max-w-sm">
-              You don't have any companies or Facebook data assigned to you at the moment. Data will appear here once it's assigned to you.
+              You don't have any companies assigned to you at the moment. Data will appear here once it's assigned to you.
             </p>
           </CardContent>
         </Card>
@@ -671,17 +480,6 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
               onUpdate={fetchAssignedData}
               canDelete={true}
               userRole={userRole}
-            />
-          ))}
-          {facebookData.map((fb) => (
-            <FacebookDataCard
-              key={fb.id}
-              data={fb}
-              onUpdate={fetchAssignedData}
-              userRole={userRole}
-              onDelete={() => {
-                fetchAssignedData();
-              }}
             />
           ))}
         </div>
