@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, Users, Building2, TrendingUp, Calendar, ChevronDown, ChevronRight, Eye, Phone, Mail, MapPin, MessageSquare, Clock } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 
@@ -93,20 +94,54 @@ const EmployeeDataOverviewView = ({ userId }: EmployeeDataOverviewViewProps) => 
         `)
         .in("assigned_to_id", memberIds);
 
+      // Get facebook shares for team members (to include FB counts like employee dashboard)
+      const { data: fbShares } = await (supabase
+        .from("facebook_data_shares" as any)
+        .select("facebook_data_id, employee_id")
+        .in("employee_id", memberIds) as any);
+
+      // Build latest comment map per facebook_data_id
+      let fbLatestMap = new Map<number, any>();
+      if (fbShares && fbShares.length > 0) {
+        const fbIds = fbShares.map((s: any) => s.facebook_data_id);
+        const { data: fbComments } = await (supabase
+          .from("facebook_data_comments" as any)
+          .select("facebook_data_id, category, created_at")
+          .in("facebook_data_id", fbIds) as any);
+
+        if (fbComments) {
+          fbComments.forEach((comment: any) => {
+            const existing = fbLatestMap.get(comment.facebook_data_id);
+            if (!existing || new Date(comment.created_at) > new Date(existing.created_at)) {
+              fbLatestMap.set(comment.facebook_data_id, comment);
+            }
+          });
+        }
+      }
+
       if (!companiesData) {
         setLoading(false);
         return;
       }
 
+      // Helper to get facebook latest comments for an employee
+      const getFbLatestForEmployee = (employeeId: string) => {
+        if (!fbShares) return [];
+        const fbIds = fbShares.filter((s: any) => s.employee_id === employeeId).map((s: any) => s.facebook_data_id);
+        return fbIds.map((id: number) => fbLatestMap.get(id)).filter(Boolean);
+      };
+
       // Process team lead data
       const teamLeadCompanies = companiesData.filter(c => c.assigned_to_id === userId);
-      const teamLeadStats = calculateEmployeeStats(teamLeadCompanies, teamLeadProfile);
+      const teamLeadFbLatest = getFbLatestForEmployee(userId);
+      const teamLeadStats = calculateEmployeeStats(teamLeadCompanies, teamLeadProfile, teamLeadFbLatest);
       setTeamLeadData(teamLeadStats);
 
       // Process team members data
       const membersWithStats = (membersData || []).map(member => {
         const memberCompanies = companiesData.filter(c => c.assigned_to_id === member.employee_id);
-        return calculateEmployeeStats(memberCompanies, member.employee);
+        const memberFbLatest = getFbLatestForEmployee(member.employee_id);
+        return calculateEmployeeStats(memberCompanies, member.employee, memberFbLatest);
       });
 
       setTeamMembers(membersWithStats);
@@ -149,38 +184,205 @@ const EmployeeDataOverviewView = ({ userId }: EmployeeDataOverviewViewProps) => 
     }
   };
 
-  const calculateEmployeeStats = (companies: any[], profile: any): TeamMember => {
-    const hotDataCount = companies.filter(company => {
-      if (!company.comments || company.comments.length === 0) return false;
-      const latestComment = company.comments.sort((a: any, b: any) => 
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      )[0];
-      return latestComment.category === "hot";
-    }).length;
+  const getCategoryName = (category: string) => {
+    switch (category) {
+      case 'hot': return 'Prime Pool';
+      case 'follow_up': return 'Active Pool';
+      case 'block': return 'Inactive Pool';
+      case 'general': return 'General';
+      default: return 'General';
+    }
+  };
 
-    const followUpCount = companies.filter(company => {
-      if (!company.comments || company.comments.length === 0) return false;
-      const latestComment = company.comments.sort((a: any, b: any) => 
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      )[0];
-      return latestComment.category === "follow_up";
-    }).length;
+  const groupCompaniesByCategory = (companies: any[]) => {
+    const grouped: Record<string, any[]> = {
+      hot: [],
+      follow_up: [],
+      block: [],
+      general: []
+    };
 
-    const blockCount = companies.filter(company => {
-      if (!company.comments || company.comments.length === 0) return false;
-      const latestComment = company.comments.sort((a: any, b: any) => 
+    companies.forEach((company) => {
+      const latestComment = company.comments?.sort((a: any, b: any) => 
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       )[0];
-      return latestComment.category === "block";
-    }).length;
+      const category = latestComment?.category || 'general';
+      grouped[category] = grouped[category] || [];
+      grouped[category].push(company);
+    });
 
-    const generalCount = companies.filter(company => {
-      if (!company.comments || company.comments.length === 0) return true;
-      const latestComment = company.comments.sort((a: any, b: any) => 
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      )[0];
-      return latestComment.category === "general";
-    }).length;
+    return grouped;
+  };
+
+  const renderCompanyCard = (company: any) => {
+    const latestComment = company.comments?.sort((a: any, b: any) => 
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    )[0];
+    const category = latestComment?.category || 'general';
+    
+    return (
+      <Card key={company.id} className="p-3">
+        <div className="flex items-start justify-between mb-2">
+          <div className="flex-1">
+            <h5 className="font-medium text-sm">{company.company_name}</h5>
+            <p className="text-xs text-muted-foreground">{company.owner_name}</p>
+          </div>
+          <Badge className={`text-xs ${getCategoryColor(category)}`}>
+            {getCategoryIcon(category)} {getCategoryName(category)}
+          </Badge>
+        </div>
+        
+        <div className="space-y-1 text-xs text-muted-foreground">
+          {company.phone && (
+            <div className="flex items-center gap-1">
+              <Phone className="h-3 w-3" />
+              <span>{company.phone}</span>
+            </div>
+          )}
+          {company.email && (
+            <div className="flex items-center gap-1">
+              <Mail className="h-3 w-3" />
+              <span>{company.email}</span>
+            </div>
+          )}
+          {company.address && (
+            <div className="flex items-center gap-1">
+              <MapPin className="h-3 w-3" />
+              <span className="truncate">{company.address}</span>
+            </div>
+          )}
+        </div>
+
+        {company.products_services && (
+          <div className="mt-2">
+            <p className="text-xs text-muted-foreground">
+              <strong>Services:</strong> {company.products_services}
+            </p>
+          </div>
+        )}
+
+        {company.comments && company.comments.length > 0 && (
+          <div className="mt-2">
+            <div className="mb-2">
+              <p className="font-medium text-xs">Latest Comment:</p>
+              <div className="p-2 bg-gray-50 rounded text-xs">
+                <p className="text-muted-foreground">{latestComment.comment_text}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {new Date(latestComment.created_at).toLocaleDateString()}
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex gap-2 mt-2">
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button 
+                    size="sm" 
+                    variant="outline" 
+                    className="text-xs h-7"
+                    onClick={() => setSelectedCompanyComments(company)}
+                  >
+                    <MessageSquare className="h-3 w-3 mr-1" />
+                    View All Comments ({company.comments.length})
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-2xl max-h-[80vh]">
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2">
+                      <MessageSquare className="h-5 w-5" />
+                      Comments for {company.company_name}
+                    </DialogTitle>
+                  </DialogHeader>
+                  <ScrollArea className="h-[60vh] pr-4">
+                    <div className="space-y-4">
+                      {company.comments
+                        .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+                        .map((comment: any) => (
+                        <Card key={comment.id} className="p-4">
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                                <span className="text-xs font-medium text-blue-600">
+                                  {comment.user?.display_name?.charAt(0) || 'U'}
+                                </span>
+                              </div>
+                              <div>
+                                <p className="font-medium text-sm">
+                                  {comment.user?.display_name || 'Unknown User'}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {comment.user?.email}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Badge className={`text-xs ${getCategoryColor(comment.category)}`}>
+                                {getCategoryIcon(comment.category)} {getCategoryName(comment.category)}
+                              </Badge>
+                              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                <Clock className="h-3 w-3" />
+                                {new Date(comment.created_at).toLocaleString()}
+                              </div>
+                            </div>
+                          </div>
+                          <p className="text-sm text-muted-foreground leading-relaxed">
+                            {comment.comment_text}
+                          </p>
+                        </Card>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </DialogContent>
+              </Dialog>
+            </div>
+          </div>
+        )}
+      </Card>
+    );
+  };
+
+  const calculateEmployeeStats = (companies: any[], profile: any, fbLatest: any[] = []): TeamMember => {
+    let hotDataCount = 0;
+    let followUpCount = 0;
+    let blockCount = 0;
+
+    companies.forEach((company) => {
+      // Inactive if deletion_state='inactive'
+      if (company.deletion_state === "inactive") {
+        blockCount += 1;
+        return;
+      }
+      const latestComment = company.comments && company.comments.length > 0
+        ? [...company.comments].sort((a: any, b: any) =>
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          )[0]
+        : null;
+      const category = latestComment?.category || null;
+      if (category === "hot") hotDataCount += 1;
+      else if (category === "follow_up") followUpCount += 1;
+      else if (category === "block") blockCount += 1;
+      // general handled after via remainder
+    });
+
+    // Include Facebook data latest categories (mirror EmployeeDashboard category counts)
+    const fbHot = fbLatest.filter((c: any) => c?.category === "hot").length;
+    const fbFollowUp = fbLatest.filter((c: any) => c?.category === "follow_up").length;
+    const fbBlock = fbLatest.filter((c: any) => c?.category === "block").length;
+
+    hotDataCount += fbHot;
+    followUpCount += fbFollowUp;
+    blockCount += fbBlock;
+
+    const generalCount =
+      companies.filter((company) => {
+        if (company.deletion_state === "inactive") return false;
+        if (!company.comments || company.comments.length === 0) return false; // only current (categorized) data
+        const latestComment = [...company.comments].sort(
+          (a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        )[0];
+        return latestComment?.category === "general";
+      }).length +
+      fbLatest.filter((c: any) => c?.category === "general").length;
 
     return {
       id: profile.id,
@@ -227,9 +429,9 @@ const EmployeeDataOverviewView = ({ userId }: EmployeeDataOverviewViewProps) => 
 
   const preparePieData = () => {
     const pieData = [
-      { name: 'Hot Data', value: (teamLeadData?.hot_data_count || 0) + teamMembers.reduce((sum, m) => sum + m.hot_data_count, 0) },
-      { name: 'Follow Up', value: (teamLeadData?.follow_up_count || 0) + teamMembers.reduce((sum, m) => sum + m.follow_up_count, 0) },
-      { name: 'Block', value: (teamLeadData?.block_count || 0) + teamMembers.reduce((sum, m) => sum + m.block_count, 0) },
+      { name: 'Prime Pool', value: (teamLeadData?.hot_data_count || 0) + teamMembers.reduce((sum, m) => sum + m.hot_data_count, 0) },
+      { name: 'Active Pool', value: (teamLeadData?.follow_up_count || 0) + teamMembers.reduce((sum, m) => sum + m.follow_up_count, 0) },
+      { name: 'Inactive Pool', value: (teamLeadData?.block_count || 0) + teamMembers.reduce((sum, m) => sum + m.block_count, 0) },
       { name: 'General', value: (teamLeadData?.general_count || 0) + teamMembers.reduce((sum, m) => sum + m.general_count, 0) },
     ];
     return pieData.filter(item => item.value > 0);
@@ -249,8 +451,8 @@ const EmployeeDataOverviewView = ({ userId }: EmployeeDataOverviewViewProps) => 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-3xl font-bold">Team Data Overview</h2>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <h2 className="text-3xl font-bold text-white">Team Data Overview</h2>
+        <div className="flex items-center gap-2 text-sm text-white">
           <Building2 className="h-4 w-4" />
           <span>Total Companies: {totalCompanies}</span>
         </div>
@@ -280,7 +482,7 @@ const EmployeeDataOverviewView = ({ userId }: EmployeeDataOverviewViewProps) => 
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Hot Data</CardTitle>
+            <CardTitle className="text-sm font-medium">Prime Pool</CardTitle>
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -292,7 +494,7 @@ const EmployeeDataOverviewView = ({ userId }: EmployeeDataOverviewViewProps) => 
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Follow Up</CardTitle>
+            <CardTitle className="text-sm font-medium">Active Pool</CardTitle>
             <Calendar className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -360,7 +562,20 @@ const EmployeeDataOverviewView = ({ userId }: EmployeeDataOverviewViewProps) => 
             {/* Team Lead */}
             {teamLeadData && (
               <div className="border rounded-lg p-4 bg-blue-50">
-                <Collapsible>
+                <Collapsible 
+                  open={expandedMembers.has(teamLeadData.id)}
+                  onOpenChange={(open) => {
+                    if (open) {
+                      setExpandedMembers(prev => new Set(prev).add(teamLeadData.id));
+                    } else {
+                      setExpandedMembers(prev => {
+                        const newSet = new Set(prev);
+                        newSet.delete(teamLeadData.id);
+                        return newSet;
+                      });
+                    }
+                  }}
+                >
                   <CollapsibleTrigger asChild>
                     <div className="flex items-center justify-between mb-3 cursor-pointer hover:bg-blue-100 p-2 rounded">
                       <div className="flex items-center gap-3">
@@ -386,15 +601,15 @@ const EmployeeDataOverviewView = ({ userId }: EmployeeDataOverviewViewProps) => 
                     </div>
                     <div className="text-center">
                       <div className="text-2xl font-bold text-red-600">{teamLeadData.hot_data_count}</div>
-                      <div className="text-sm text-muted-foreground">Hot Data</div>
+                      <div className="text-sm text-muted-foreground">Prime Pool</div>
                     </div>
                     <div className="text-center">
                       <div className="text-2xl font-bold text-orange-600">{teamLeadData.follow_up_count}</div>
-                      <div className="text-sm text-muted-foreground">Follow Up</div>
+                      <div className="text-sm text-muted-foreground">Active Pool</div>
                     </div>
                     <div className="text-center">
                       <div className="text-2xl font-bold text-gray-600">{teamLeadData.block_count}</div>
-                      <div className="text-sm text-muted-foreground">Block</div>
+                      <div className="text-sm text-muted-foreground">Inactive Pool</div>
                     </div>
                     <div className="text-center">
                       <div className="text-2xl font-bold text-green-600">{teamLeadData.general_count}</div>
@@ -404,179 +619,71 @@ const EmployeeDataOverviewView = ({ userId }: EmployeeDataOverviewViewProps) => 
 
                   <CollapsibleContent>
                     <div className="space-y-3">
-                      <h4 className="font-medium text-sm text-muted-foreground mb-3">Assigned Companies:</h4>
                       {teamLeadData.companies.length === 0 ? (
                         <p className="text-sm text-muted-foreground italic">No companies assigned</p>
                       ) : (
-                        <div className="grid gap-3 md:grid-cols-2">
-                          {teamLeadData.companies.map((company: any) => {
-                            const latestComment = company.comments?.sort((a: any, b: any) => 
-                              new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-                            )[0];
-                            const category = latestComment?.category || 'general';
-                            
+                        <Tabs defaultValue="all" className="w-full">
+                          <TabsList className="grid w-full grid-cols-5">
+                            <TabsTrigger value="all">All ({teamLeadData.companies.length})</TabsTrigger>
+                            <TabsTrigger value="prime">Prime Pool ({teamLeadData.hot_data_count})</TabsTrigger>
+                            <TabsTrigger value="active">Active Pool ({teamLeadData.follow_up_count})</TabsTrigger>
+                            <TabsTrigger value="block">Inactive Pool ({teamLeadData.block_count})</TabsTrigger>
+                            <TabsTrigger value="general">General ({teamLeadData.general_count})</TabsTrigger>
+                          </TabsList>
+                          
+                          <TabsContent value="all" className="mt-4">
+                            <div className="grid gap-3 md:grid-cols-2">
+                              {teamLeadData.companies.map((company: any) => renderCompanyCard(company))}
+                            </div>
+                          </TabsContent>
+                          
+                          {(() => {
+                            const grouped = groupCompaniesByCategory(teamLeadData.companies);
                             return (
-                              <Card key={company.id} className="p-3">
-                                <div className="flex items-start justify-between mb-2">
-                                  <div className="flex-1">
-                                    <h5 className="font-medium text-sm">{company.company_name}</h5>
-                                    <p className="text-xs text-muted-foreground">{company.owner_name}</p>
-                                  </div>
-                                  <Badge className={`text-xs ${getCategoryColor(category)}`}>
-                                    {getCategoryIcon(category)} {category.replace('_', ' ')}
-                                  </Badge>
-                                </div>
+                              <>
+                                <TabsContent value="prime" className="mt-4">
+                                  {grouped.hot.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground italic text-center py-4">No companies in Prime Pool</p>
+                                  ) : (
+                                    <div className="grid gap-3 md:grid-cols-2">
+                                      {grouped.hot.map((company: any) => renderCompanyCard(company))}
+                                    </div>
+                                  )}
+                                </TabsContent>
                                 
-                                <div className="space-y-1 text-xs text-muted-foreground">
-                                  {company.phone && (
-                                    <div className="flex items-center gap-1">
-                                      <Phone className="h-3 w-3" />
-                                      <span>{company.phone}</span>
+                                <TabsContent value="active" className="mt-4">
+                                  {grouped.follow_up.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground italic text-center py-4">No companies in Active Pool</p>
+                                  ) : (
+                                    <div className="grid gap-3 md:grid-cols-2">
+                                      {grouped.follow_up.map((company: any) => renderCompanyCard(company))}
                                     </div>
                                   )}
-                                  {company.email && (
-                                    <div className="flex items-center gap-1">
-                                      <Mail className="h-3 w-3" />
-                                      <span>{company.email}</span>
+                                </TabsContent>
+                                
+                                <TabsContent value="block" className="mt-4">
+                                  {grouped.block.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground italic text-center py-4">No companies in Inactive Pool</p>
+                                  ) : (
+                                    <div className="grid gap-3 md:grid-cols-2">
+                                      {grouped.block.map((company: any) => renderCompanyCard(company))}
                                     </div>
                                   )}
-                                  {company.address && (
-                                    <div className="flex items-center gap-1">
-                                      <MapPin className="h-3 w-3" />
-                                      <span className="truncate">{company.address}</span>
+                                </TabsContent>
+                                
+                                <TabsContent value="general" className="mt-4">
+                                  {grouped.general.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground italic text-center py-4">No companies in General</p>
+                                  ) : (
+                                    <div className="grid gap-3 md:grid-cols-2">
+                                      {grouped.general.map((company: any) => renderCompanyCard(company))}
                                     </div>
                                   )}
-                                </div>
-
-                                {company.products_services && (
-                                  <div className="mt-2">
-                                    <p className="text-xs text-muted-foreground">
-                                      <strong>Services:</strong> {company.products_services}
-                                    </p>
-                                  </div>
-                                )}
-
-                                {company.comments && company.comments.length > 0 && (
-                                  <div className="mt-2">
-                                    <div className="mb-2">
-                                      <p className="font-medium text-xs">Latest Comment:</p>
-                                      <div className="p-2 bg-gray-50 rounded text-xs">
-                                        <p className="text-muted-foreground">{latestComment.comment_text}</p>
-                                        <p className="text-xs text-muted-foreground mt-1">
-                                          {new Date(latestComment.created_at).toLocaleDateString()}
-                                        </p>
-                                      </div>
-                                    </div>
-                                    
-                                    <div className="flex gap-2 mt-2">
-                                      <Dialog>
-                                        <DialogTrigger asChild>
-                                          <Button 
-                                            size="sm" 
-                                            variant="outline" 
-                                            className="text-xs h-7"
-                                            onClick={() => setSelectedCompanyComments(company)}
-                                          >
-                                            <MessageSquare className="h-3 w-3 mr-1" />
-                                            View All Comments ({company.comments.length})
-                                          </Button>
-                                        </DialogTrigger>
-                                        <DialogContent className="max-w-2xl max-h-[80vh]">
-                                          <DialogHeader>
-                                            <DialogTitle className="flex items-center gap-2">
-                                              <MessageSquare className="h-5 w-5" />
-                                              Comments for {company.company_name}
-                                            </DialogTitle>
-                                          </DialogHeader>
-                                          <ScrollArea className="h-[60vh] pr-4">
-                                            <div className="space-y-4">
-                                              {company.comments
-                                                .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-                                                .map((comment: any) => (
-                                                <Card key={comment.id} className="p-4">
-                                                  <div className="flex items-start justify-between mb-3">
-                                                    <div className="flex items-center gap-2">
-                                                      <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                                                        <span className="text-xs font-medium text-blue-600">
-                                                          {comment.user?.display_name?.charAt(0) || 'U'}
-                                                        </span>
-                                                      </div>
-                                                      <div>
-                                                        <p className="font-medium text-sm">
-                                                          {comment.user?.display_name || 'Unknown User'}
-                                                        </p>
-                                                        <p className="text-xs text-muted-foreground">
-                                                          {comment.user?.email}
-                                                        </p>
-                                                      </div>
-                                                    </div>
-                                                    <div className="flex items-center gap-2">
-                                                      <Badge className={`text-xs ${getCategoryColor(comment.category)}`}>
-                                                        {getCategoryIcon(comment.category)} {comment.category.replace('_', ' ')}
-                                                      </Badge>
-                                                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                                        <Clock className="h-3 w-3" />
-                                                        {new Date(comment.created_at).toLocaleString()}
-                                                      </div>
-                                                    </div>
-                                                  </div>
-                                                  <p className="text-sm text-muted-foreground leading-relaxed">
-                                                    {comment.comment_text}
-                                                  </p>
-                                                </Card>
-                                              ))}
-                                            </div>
-                                          </ScrollArea>
-                                        </DialogContent>
-                                      </Dialog>
-                                      
-                                      {company.comments.length > 1 && (
-                                        <details className="text-xs">
-                                          <summary className="cursor-pointer font-medium text-blue-600 hover:text-blue-800">
-                                            Quick Preview
-                                          </summary>
-                                          <div className="mt-2 space-y-2 max-h-40 overflow-y-auto">
-                                            {company.comments
-                                              .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-                                              .slice(0, 3)
-                                              .map((comment: any) => (
-                                              <div key={comment.id} className="p-2 bg-white border rounded">
-                                                <div className="flex items-center justify-between mb-1">
-                                                  <span className="font-medium text-xs">
-                                                    {comment.user?.display_name || 'Unknown User'}
-                                                  </span>
-                                                  <span className="text-xs text-muted-foreground">
-                                                    {new Date(comment.created_at).toLocaleDateString()}
-                                                  </span>
-                                                </div>
-                                                <p className="text-xs text-muted-foreground mb-1">
-                                                  {comment.comment_text}
-                                                </p>
-                                                <div className="flex items-center gap-2">
-                                                  <Badge className={`text-xs ${getCategoryColor(comment.category)}`}>
-                                                    {getCategoryIcon(comment.category)} {comment.category.replace('_', ' ')}
-                                                  </Badge>
-                                                  <span className="text-xs text-muted-foreground">
-                                                    {comment.user?.email}
-                                                  </span>
-                                                </div>
-                                              </div>
-                                            ))}
-                                            {company.comments.length > 3 && (
-                                              <p className="text-xs text-center text-muted-foreground italic">
-                                                ... and {company.comments.length - 3} more comments
-                                              </p>
-                                            )}
-                                          </div>
-                                        </details>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-                              </Card>
+                                </TabsContent>
+                              </>
                             );
-                          })}
-                        </div>
+                          })()}
+                        </Tabs>
                       )}
                     </div>
                   </CollapsibleContent>
@@ -587,7 +694,20 @@ const EmployeeDataOverviewView = ({ userId }: EmployeeDataOverviewViewProps) => 
             {/* Team Members */}
             {teamMembers.map((member) => (
               <div key={member.id} className="border rounded-lg p-4">
-                <Collapsible>
+                <Collapsible
+                  open={expandedMembers.has(member.id)}
+                  onOpenChange={(open) => {
+                    if (open) {
+                      setExpandedMembers(prev => new Set(prev).add(member.id));
+                    } else {
+                      setExpandedMembers(prev => {
+                        const newSet = new Set(prev);
+                        newSet.delete(member.id);
+                        return newSet;
+                      });
+                    }
+                  }}
+                >
                   <CollapsibleTrigger asChild>
                     <div className="flex items-center justify-between mb-3 cursor-pointer hover:bg-gray-50 p-2 rounded">
                       <div className="flex items-center gap-3">
@@ -613,15 +733,15 @@ const EmployeeDataOverviewView = ({ userId }: EmployeeDataOverviewViewProps) => 
                     </div>
                     <div className="text-center">
                       <div className="text-2xl font-bold text-red-600">{member.hot_data_count}</div>
-                      <div className="text-sm text-muted-foreground">Hot Data</div>
+                      <div className="text-sm text-muted-foreground">Prime Pool</div>
                     </div>
                     <div className="text-center">
                       <div className="text-2xl font-bold text-orange-600">{member.follow_up_count}</div>
-                      <div className="text-sm text-muted-foreground">Follow Up</div>
+                      <div className="text-sm text-muted-foreground">Active Pool</div>
                     </div>
                     <div className="text-center">
                       <div className="text-2xl font-bold text-gray-600">{member.block_count}</div>
-                      <div className="text-sm text-muted-foreground">Block</div>
+                      <div className="text-sm text-muted-foreground">Inactive Pool</div>
                     </div>
                     <div className="text-center">
                       <div className="text-2xl font-bold text-green-600">{member.general_count}</div>
@@ -631,179 +751,71 @@ const EmployeeDataOverviewView = ({ userId }: EmployeeDataOverviewViewProps) => 
 
                   <CollapsibleContent>
                     <div className="space-y-3">
-                      <h4 className="font-medium text-sm text-muted-foreground mb-3">Assigned Companies:</h4>
                       {member.companies.length === 0 ? (
                         <p className="text-sm text-muted-foreground italic">No companies assigned</p>
                       ) : (
-                        <div className="grid gap-3 md:grid-cols-2">
-                          {member.companies.map((company: any) => {
-                            const latestComment = company.comments?.sort((a: any, b: any) => 
-                              new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-                            )[0];
-                            const category = latestComment?.category || 'general';
-                            
+                        <Tabs defaultValue="all" className="w-full">
+                          <TabsList className="grid w-full grid-cols-5">
+                            <TabsTrigger value="all">All ({member.companies.length})</TabsTrigger>
+                            <TabsTrigger value="prime">Prime Pool ({member.hot_data_count})</TabsTrigger>
+                            <TabsTrigger value="active">Active Pool ({member.follow_up_count})</TabsTrigger>
+                            <TabsTrigger value="block">Inactive Pool ({member.block_count})</TabsTrigger>
+                            <TabsTrigger value="general">General ({member.general_count})</TabsTrigger>
+                          </TabsList>
+                          
+                          <TabsContent value="all" className="mt-4">
+                            <div className="grid gap-3 md:grid-cols-2">
+                              {member.companies.map((company: any) => renderCompanyCard(company))}
+                            </div>
+                          </TabsContent>
+                          
+                          {(() => {
+                            const grouped = groupCompaniesByCategory(member.companies);
                             return (
-                              <Card key={company.id} className="p-3">
-                                <div className="flex items-start justify-between mb-2">
-                                  <div className="flex-1">
-                                    <h5 className="font-medium text-sm">{company.company_name}</h5>
-                                    <p className="text-xs text-muted-foreground">{company.owner_name}</p>
-                                  </div>
-                                  <Badge className={`text-xs ${getCategoryColor(category)}`}>
-                                    {getCategoryIcon(category)} {category.replace('_', ' ')}
-                                  </Badge>
-                                </div>
+                              <>
+                                <TabsContent value="prime" className="mt-4">
+                                  {grouped.hot.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground italic text-center py-4">No companies in Prime Pool</p>
+                                  ) : (
+                                    <div className="grid gap-3 md:grid-cols-2">
+                                      {grouped.hot.map((company: any) => renderCompanyCard(company))}
+                                    </div>
+                                  )}
+                                </TabsContent>
                                 
-                                <div className="space-y-1 text-xs text-muted-foreground">
-                                  {company.phone && (
-                                    <div className="flex items-center gap-1">
-                                      <Phone className="h-3 w-3" />
-                                      <span>{company.phone}</span>
+                                <TabsContent value="active" className="mt-4">
+                                  {grouped.follow_up.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground italic text-center py-4">No companies in Active Pool</p>
+                                  ) : (
+                                    <div className="grid gap-3 md:grid-cols-2">
+                                      {grouped.follow_up.map((company: any) => renderCompanyCard(company))}
                                     </div>
                                   )}
-                                  {company.email && (
-                                    <div className="flex items-center gap-1">
-                                      <Mail className="h-3 w-3" />
-                                      <span>{company.email}</span>
+                                </TabsContent>
+                                
+                                <TabsContent value="block" className="mt-4">
+                                  {grouped.block.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground italic text-center py-4">No companies in Inactive Pool</p>
+                                  ) : (
+                                    <div className="grid gap-3 md:grid-cols-2">
+                                      {grouped.block.map((company: any) => renderCompanyCard(company))}
                                     </div>
                                   )}
-                                  {company.address && (
-                                    <div className="flex items-center gap-1">
-                                      <MapPin className="h-3 w-3" />
-                                      <span className="truncate">{company.address}</span>
+                                </TabsContent>
+                                
+                                <TabsContent value="general" className="mt-4">
+                                  {grouped.general.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground italic text-center py-4">No companies in General</p>
+                                  ) : (
+                                    <div className="grid gap-3 md:grid-cols-2">
+                                      {grouped.general.map((company: any) => renderCompanyCard(company))}
                                     </div>
                                   )}
-                                </div>
-
-                                {company.products_services && (
-                                  <div className="mt-2">
-                                    <p className="text-xs text-muted-foreground">
-                                      <strong>Services:</strong> {company.products_services}
-                                    </p>
-                                  </div>
-                                )}
-
-                                {company.comments && company.comments.length > 0 && (
-                                  <div className="mt-2">
-                                    <div className="mb-2">
-                                      <p className="font-medium text-xs">Latest Comment:</p>
-                                      <div className="p-2 bg-gray-50 rounded text-xs">
-                                        <p className="text-muted-foreground">{latestComment.comment_text}</p>
-                                        <p className="text-xs text-muted-foreground mt-1">
-                                          {new Date(latestComment.created_at).toLocaleDateString()}
-                                        </p>
-                                      </div>
-                                    </div>
-                                    
-                                    <div className="flex gap-2 mt-2">
-                                      <Dialog>
-                                        <DialogTrigger asChild>
-                                          <Button 
-                                            size="sm" 
-                                            variant="outline" 
-                                            className="text-xs h-7"
-                                            onClick={() => setSelectedCompanyComments(company)}
-                                          >
-                                            <MessageSquare className="h-3 w-3 mr-1" />
-                                            View All Comments ({company.comments.length})
-                                          </Button>
-                                        </DialogTrigger>
-                                        <DialogContent className="max-w-2xl max-h-[80vh]">
-                                          <DialogHeader>
-                                            <DialogTitle className="flex items-center gap-2">
-                                              <MessageSquare className="h-5 w-5" />
-                                              Comments for {company.company_name}
-                                            </DialogTitle>
-                                          </DialogHeader>
-                                          <ScrollArea className="h-[60vh] pr-4">
-                                            <div className="space-y-4">
-                                              {company.comments
-                                                .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-                                                .map((comment: any) => (
-                                                <Card key={comment.id} className="p-4">
-                                                  <div className="flex items-start justify-between mb-3">
-                                                    <div className="flex items-center gap-2">
-                                                      <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                                                        <span className="text-xs font-medium text-blue-600">
-                                                          {comment.user?.display_name?.charAt(0) || 'U'}
-                                                        </span>
-                                                      </div>
-                                                      <div>
-                                                        <p className="font-medium text-sm">
-                                                          {comment.user?.display_name || 'Unknown User'}
-                                                        </p>
-                                                        <p className="text-xs text-muted-foreground">
-                                                          {comment.user?.email}
-                                                        </p>
-                                                      </div>
-                                                    </div>
-                                                    <div className="flex items-center gap-2">
-                                                      <Badge className={`text-xs ${getCategoryColor(comment.category)}`}>
-                                                        {getCategoryIcon(comment.category)} {comment.category.replace('_', ' ')}
-                                                      </Badge>
-                                                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                                        <Clock className="h-3 w-3" />
-                                                        {new Date(comment.created_at).toLocaleString()}
-                                                      </div>
-                                                    </div>
-                                                  </div>
-                                                  <p className="text-sm text-muted-foreground leading-relaxed">
-                                                    {comment.comment_text}
-                                                  </p>
-                                                </Card>
-                                              ))}
-                                            </div>
-                                          </ScrollArea>
-                                        </DialogContent>
-                                      </Dialog>
-                                      
-                                      {company.comments.length > 1 && (
-                                        <details className="text-xs">
-                                          <summary className="cursor-pointer font-medium text-blue-600 hover:text-blue-800">
-                                            Quick Preview
-                                          </summary>
-                                          <div className="mt-2 space-y-2 max-h-40 overflow-y-auto">
-                                            {company.comments
-                                              .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-                                              .slice(0, 3)
-                                              .map((comment: any) => (
-                                              <div key={comment.id} className="p-2 bg-white border rounded">
-                                                <div className="flex items-center justify-between mb-1">
-                                                  <span className="font-medium text-xs">
-                                                    {comment.user?.display_name || 'Unknown User'}
-                                                  </span>
-                                                  <span className="text-xs text-muted-foreground">
-                                                    {new Date(comment.created_at).toLocaleDateString()}
-                                                  </span>
-                                                </div>
-                                                <p className="text-xs text-muted-foreground mb-1">
-                                                  {comment.comment_text}
-                                                </p>
-                                                <div className="flex items-center gap-2">
-                                                  <Badge className={`text-xs ${getCategoryColor(comment.category)}`}>
-                                                    {getCategoryIcon(comment.category)} {comment.category.replace('_', ' ')}
-                                                  </Badge>
-                                                  <span className="text-xs text-muted-foreground">
-                                                    {comment.user?.email}
-                                                  </span>
-                                                </div>
-                                              </div>
-                                            ))}
-                                            {company.comments.length > 3 && (
-                                              <p className="text-xs text-center text-muted-foreground italic">
-                                                ... and {company.comments.length - 3} more comments
-                                              </p>
-                                            )}
-                                          </div>
-                                        </details>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-                              </Card>
+                                </TabsContent>
+                              </>
                             );
-                          })}
-                        </div>
+                          })()}
+                        </Tabs>
                       )}
                     </div>
                   </CollapsibleContent>

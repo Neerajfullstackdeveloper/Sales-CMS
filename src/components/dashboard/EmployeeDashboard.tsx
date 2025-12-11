@@ -496,12 +496,24 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
       fetchCategoryCounts();
     };
 
+    const handleAssignedCountUpdate = (event: Event) => {
+      const customEvent = event as CustomEvent<{ count: number }>;
+      if (customEvent.detail?.count !== undefined) {
+        setCategoryCounts((prev) => ({
+          ...prev,
+          assigned: customEvent.detail.count,
+        }));
+      }
+    };
+
     window.addEventListener('facebookDataUpdated', handleDataUpdate);
     window.addEventListener('companyDataUpdated', handleDataUpdate);
+    window.addEventListener('assignedCountUpdated', handleAssignedCountUpdate);
 
     return () => {
       window.removeEventListener('facebookDataUpdated', handleDataUpdate);
       window.removeEventListener('companyDataUpdated', handleDataUpdate);
+      window.removeEventListener('assignedCountUpdated', handleAssignedCountUpdate);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

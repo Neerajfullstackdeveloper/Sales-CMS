@@ -115,33 +115,160 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
           .select("*", { count: "exact", head: true })
           .eq("is_paid", true)
           .is("deleted_at", null) as any,
-        // Fetch Facebook delete data count (all admin_recycle deletions)
-        // Match the logic in FacebookDeleteDataView: include ALL admin_recycle deletions
-        // since we can't reliably distinguish team lead deletions from admin deletions
+        // Fetch Facebook delete data count (only items deleted by team leads)
+        // Match the exact filtering logic from FacebookDeleteDataView
         (async () => {
           // Get all admin_recycle Facebook data
-          const { data: allData } = await (supabase
+          const { data: allAdminRecycle } = await (supabase
             .from("facebook_data" as any)
-            .select("id")
+            .select("id, deleted_by_id")
             .eq("deletion_state", "admin_recycle") as any);
           
-          // Count all admin_recycle items (matching FacebookDeleteDataView logic)
-          const count = allData?.length || 0;
-          return { count };
+          if (!allAdminRecycle || allAdminRecycle.length === 0) {
+            return { count: 0 };
+          }
+          
+          // Get admin IDs and team lead IDs (matching FacebookDeleteDataView logic)
+          const [adminsResult, teamLeadsResult, teamsResult] = await Promise.all([
+            supabase
+              .from("user_roles")
+              .select("user_id")
+              .eq("role", "admin"),
+            supabase
+              .from("user_roles")
+              .select("user_id")
+              .eq("role", "team_lead"),
+            supabase
+              .from("teams" as any)
+              .select("team_lead_id") as any
+          ]);
+          
+          const adminIds = adminsResult.data?.map((a: any) => a.user_id) || [];
+          const teamLeadIdsFromRoles = teamLeadsResult.data?.map((tl: any) => tl.user_id) || [];
+          const teamLeadIdsFromTeams = teamsResult.data?.map((t: any) => t.team_lead_id).filter(Boolean) || [];
+          
+          // Combine team lead IDs from both sources
+          let allTeamLeadIds = [...new Set([...teamLeadIdsFromRoles, ...teamLeadIdsFromTeams])];
+          
+          // Check deleted_by_ids against teams table to find any team leads not in user_roles
+          const deletedByIds = [...new Set(allAdminRecycle.map((fb: any) => fb.deleted_by_id).filter(Boolean))];
+          const deletedByIdsInTeams = deletedByIds.filter((id: string) => 
+            teamsResult.data?.some((t: any) => t.team_lead_id === id)
+          );
+          
+          // Add any team leads found in teams table that weren't already in the list
+          const additionalTeamLeadIds = deletedByIdsInTeams.filter((id: string) => !allTeamLeadIds.includes(id));
+          if (additionalTeamLeadIds.length > 0) {
+            allTeamLeadIds.push(...additionalTeamLeadIds);
+          }
+          
+          // Filter to match FacebookDeleteDataView logic: only items deleted by team leads or non-admins
+          const filteredData = allAdminRecycle.filter((fb: any) => {
+            if (!fb.deleted_by_id) return false;
+            
+            // If deleted by a team lead, always include (even if they're also an admin)
+            const isTeamLead = allTeamLeadIds.includes(fb.deleted_by_id);
+            if (isTeamLead) {
+              return true;
+            }
+            
+            // If not an admin, include it (this handles team leads not in user_roles/teams)
+            const isNotAdmin = !adminIds.includes(fb.deleted_by_id);
+            if (isNotAdmin) {
+              return true;
+            }
+            
+            // Special case: If admin deleted but they're also in teams table as team_lead_id
+            const isAdminButAlsoTeamLead = adminIds.includes(fb.deleted_by_id) && 
+              teamsResult.data?.some((t: any) => t.team_lead_id === fb.deleted_by_id);
+            
+            if (isAdminButAlsoTeamLead) {
+              return true;
+            }
+            
+            // Include ALL admin_recycle deletions (matching FacebookDeleteDataView line 162)
+            return true;
+          });
+          
+          return { count: filteredData.length };
         })(),
-        // Fetch General delete data count (all admin_recycle deletions)
-        // Match the logic in GeneralDeleteDataView: include ALL admin_recycle deletions
-        // since we can't reliably distinguish team lead deletions from admin deletions
+        // Fetch General delete data count (only items deleted by team leads)
+        // Match the exact filtering logic from GeneralDeleteDataView
         (async () => {
           // Get all admin_recycle companies
-          const { data: allData } = await supabase
+          const { data: allAdminRecycle } = await supabase
             .from("companies")
-            .select("id")
+            .select("id, deleted_by_id")
             .eq("deletion_state", "admin_recycle");
           
-          // Count all admin_recycle items (matching GeneralDeleteDataView logic)
-          const count = allData?.length || 0;
-          return { count };
+          if (!allAdminRecycle || allAdminRecycle.length === 0) {
+            return { count: 0 };
+          }
+          
+          // Get admin IDs and team lead IDs (matching GeneralDeleteDataView logic)
+          const [teamLeadsResult, adminsResult, teamsResult] = await Promise.all([
+            supabase
+              .from("user_roles")
+              .select("user_id")
+              .eq("role", "team_lead"),
+            supabase
+              .from("user_roles")
+              .select("user_id")
+              .eq("role", "admin"),
+            supabase
+              .from("teams" as any)
+              .select("team_lead_id") as any
+          ]);
+          
+          const teamLeadIdsFromRoles = teamLeadsResult.data?.map((tl: any) => tl.user_id) || [];
+          const adminIds = adminsResult.data?.map((a: any) => a.user_id) || [];
+          const teamLeadIdsFromTeams = teamsResult.data?.map((t: any) => t.team_lead_id).filter(Boolean) || [];
+          
+          // Combine team lead IDs from both sources
+          let allTeamLeadIds = [...new Set([...teamLeadIdsFromRoles, ...teamLeadIdsFromTeams])];
+          
+          // Check deleted_by_ids against teams table to find any team leads not in user_roles
+          const deletedByIds = [...new Set(allAdminRecycle.map((c: any) => c.deleted_by_id).filter(Boolean))];
+          const deletedByIdsInTeams = deletedByIds.filter((id: string) => 
+            teamsResult.data?.some((t: any) => t.team_lead_id === id)
+          );
+          
+          // Add any team leads found in teams table that weren't already in the list
+          const additionalTeamLeadIds = deletedByIdsInTeams.filter((id: string) => !allTeamLeadIds.includes(id));
+          if (additionalTeamLeadIds.length > 0) {
+            allTeamLeadIds.push(...additionalTeamLeadIds);
+          }
+          
+          // Filter to match GeneralDeleteDataView logic (lines 230-288)
+          const filteredData = allAdminRecycle.filter((c: any) => {
+            // Filter out items without deleted_by_id (matching line 231)
+            if (!c.deleted_by_id) return false;
+            
+            // If deleted by a team lead, always include (even if they're also an admin) - line 234-241
+            const isTeamLead = allTeamLeadIds.includes(c.deleted_by_id);
+            if (isTeamLead) {
+              return true;
+            }
+            
+            // If not an admin, include it (this handles team leads not in user_roles/teams) - line 244-257
+            const isNotAdmin = !adminIds.includes(c.deleted_by_id);
+            if (isNotAdmin) {
+              return true;
+            }
+            
+            // Special case: If admin deleted but they're also in teams table as team_lead_id - line 259-271
+            const isAdminButAlsoTeamLead = adminIds.includes(c.deleted_by_id) && 
+              teamsResult.data?.some((t: any) => t.team_lead_id === c.deleted_by_id);
+            
+            if (isAdminButAlsoTeamLead) {
+              return true;
+            }
+            
+            // Include ALL admin_recycle deletions (matching GeneralDeleteDataView line 287)
+            return true;
+          });
+          
+          return { count: filteredData.length };
         })()
       ]);
 

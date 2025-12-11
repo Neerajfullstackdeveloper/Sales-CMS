@@ -159,8 +159,13 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
     setLoading(false);
   };
   
-  // Save to cache whenever companies changes
+  // Save to cache whenever companies changes and broadcast count for sidebar
   useEffect(() => {
+    // Always broadcast current count so sidebar stays in sync (even when empty)
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("assignedCountUpdated", { detail: { count: companies.length } }));
+    }
+
     if (companies.length > 0) {
       localStorage.setItem(
         `assignedData_${userId}`,
@@ -177,6 +182,9 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
       }, 15 * 60 * 1000);
       
       return () => clearTimeout(timeoutId);
+    } else {
+      // If empty, ensure cache is cleared
+      localStorage.removeItem(`assignedData_${userId}`);
     }
   }, [companies, userId]);
 
@@ -390,12 +398,21 @@ const AssignedDataView = ({ userId, userRole }: AssignedDataViewProps) => {
       });
 
       setCompanies(finalCompanies);
+
+      // Notify other dashboards (sidebar counts) with the current assigned count
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("assignedCountUpdated", { detail: { count: finalCompanies.length } }));
+      }
     } else {
       // On error, set empty array
       if (error) {
         console.error("Error fetching assigned companies:", error);
       }
       setCompanies([]);
+
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("assignedCountUpdated", { detail: { count: 0 } }));
+      }
     }
   };
 
