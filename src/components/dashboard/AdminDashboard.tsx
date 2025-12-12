@@ -164,7 +164,12 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
           
           // Filter to match FacebookDeleteDataView logic: only items deleted by team leads or non-admins
           const filteredData = allAdminRecycle.filter((fb: any) => {
-            if (!fb.deleted_by_id) return false;
+            // If deleted_by_id is null/undefined, still include it (might be legacy data or system deletion)
+            if (!fb.deleted_by_id) {
+              // Include items without deleted_by_id as they might be team lead deletions
+              // that weren't properly tracked
+              return true;
+            }
             
             // If deleted by a team lead, always include (even if they're also an admin)
             const isTeamLead = allTeamLeadIds.includes(fb.deleted_by_id);

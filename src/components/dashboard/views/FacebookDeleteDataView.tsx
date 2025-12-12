@@ -54,6 +54,7 @@ const FacebookDeleteDataView = () => {
         .from("facebook_data" as any)
         .select(`
           *,
+          deleted_by_id,
           deleted_by:profiles!facebook_data_deleted_by_id_fkey(display_name, email)
         `)
         .eq("deletion_state", "admin_recycle")
@@ -134,7 +135,12 @@ const FacebookDeleteDataView = () => {
       // we'll include ALL admin_recycle deletions. The sections are specifically for team lead deletions,
       // and if an admin also has team lead permissions, their deletions should appear here.
       const data = allAdminRecycle.filter((fb: any) => {
-        if (!fb.deleted_by_id) return false;
+        // If deleted_by_id is null/undefined, still include it (might be legacy data or system deletion)
+        if (!fb.deleted_by_id) {
+          // Include items without deleted_by_id as they might be team lead deletions
+          // that weren't properly tracked
+          return true;
+        }
         
         // If deleted by a team lead, always include (even if they're also an admin)
         const isTeamLead = allTeamLeadIds.includes(fb.deleted_by_id);
