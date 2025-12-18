@@ -438,20 +438,20 @@ const SearchDataView = () => {
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-black/70">Search</CardTitle>
+      <Card className="shadow-lg border-2">
+        <CardHeader className="pb-4">
+          <CardTitle className="text-xl font-semibold text-black/80">Search</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex gap-2">
+          <div className="flex gap-3">
             <Input
               placeholder="Enter company name, email, or phone number..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyPress={handleKeyPress}
-              className="flex-1 text-white placeholder:text-white/50"
+              className="flex-1 text-white placeholder:text-white/50 h-11"
             />
-            <Button onClick={handleSearch} disabled={loading || !searchQuery.trim()}>
+            <Button onClick={handleSearch} disabled={loading || !searchQuery.trim()} className="h-11 px-6">
               {loading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -509,65 +509,83 @@ const SearchDataView = () => {
                   Found {searchResults.length} result(s)
                 </p>
               </div>
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                 {searchResults.map((result) => (
-                  <Card key={result.id} className="hover:shadow-lg transition-shadow">
-                    <CardHeader>
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
+                  <Card key={result.id} className="hover:shadow-xl transition-all duration-300 hover:scale-[1.02] border-2 hover:border-primary/50 h-full flex flex-col">
+                    <CardHeader className="pb-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-3">
                             {result.type === "company" ? (
-                              <Building2 className="h-5 w-5 text-primary" />
+                              <Building2 className="h-5 w-5 text-primary flex-shrink-0" />
                             ) : (
-                              <User className="h-5 w-5 text-blue-500" />
+                              <User className="h-5 w-5 text-blue-500 flex-shrink-0" />
                             )}
-                            <Badge variant={result.type === "company" ? "default" : "secondary"}>
+                            <Badge variant={result.type === "company" ? "default" : "secondary"} className="text-xs">
                               {result.type === "company" ? "Company" : "Facebook Data"}
                             </Badge>
                           </div>
-                          <CardTitle className="text-lg">
+                          <CardTitle className="text-lg font-bold leading-tight mb-2 line-clamp-2">
                             {result.type === "company" ? result.company_name : result.name || result.company_name}
                           </CardTitle>
                           {result.owner_name && (
-                            <p className="text-sm text-muted-foreground mt-1">
+                            <p className="text-sm text-muted-foreground mt-1 line-clamp-1">
                               Owner: {result.owner_name}
                             </p>
+                          )}
+                          {(result.email || result.phone) && (
+                            <div className="mt-3 space-y-1.5">
+                              {result.email && (
+                                <div className="flex items-center gap-2 text-sm">
+                                  <Mail className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                  <span className="text-muted-foreground truncate">{result.email}</span>
+                                </div>
+                              )}
+                              {result.phone && (
+                                <div className="flex items-center gap-2 text-sm">
+                                  <Phone className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                  <span className="text-muted-foreground">{result.phone}</span>
+                                </div>
+                              )}
+                            </div>
                           )}
                         </div>
                       </div>
                     </CardHeader>
-                    <CardContent className="space-y-3">
+                    <CardContent className="pt-0 pb-5 space-y-3 flex-1 flex flex-col">
                       {result.employees && result.employees.length > 0 ? (
-                        <div className="pt-3 border-t space-y-2">
+                        <div className="pt-4 border-t space-y-2.5 flex-1">
                           <p className="text-sm font-semibold text-primary mb-2">
                             Assigned to {result.employees.length} employee{result.employees.length > 1 ? 's' : ''}:
                           </p>
-                          {result.employees.map((employee, index) => (
-                            <div key={employee.id} className="flex items-center gap-2">
-                              <User className="h-4 w-4 text-primary flex-shrink-0" />
-                              <div className="flex-1">
-                                <p className="text-sm font-medium text-primary">
-                                  {employee.name || 'Unknown'}
-                                </p>
-                                {employee.email && (
-                                  <p className="text-xs text-muted-foreground">
-                                    {employee.email}
+                          <div className="space-y-2">
+                            {result.employees.map((employee, index) => (
+                              <div key={employee.id} className="flex items-center gap-2.5 p-2 rounded-md bg-muted/50">
+                                <User className="h-4 w-4 text-primary flex-shrink-0" />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-primary truncate">
+                                    {employee.name || 'Unknown'}
                                   </p>
-                                )}
+                                  {employee.email && (
+                                    <p className="text-xs text-muted-foreground truncate">
+                                      {employee.email}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            ))}
+                          </div>
                         </div>
                       ) : result.assigned_to_id && result.employee_name ? (
-                        <div className="pt-3 border-t">
-                          <div className="flex items-center gap-2">
-                            <User className="h-4 w-4 text-primary" />
-                            <div>
-                              <p className="text-sm font-semibold text-primary">
+                        <div className="pt-4 border-t flex-1">
+                          <div className="flex items-center gap-2.5 p-2 rounded-md bg-muted/50">
+                            <User className="h-4 w-4 text-primary flex-shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-semibold text-primary truncate">
                                 Assigned to: {result.employee_name}
                               </p>
                               {result.employee_email && (
-                                <p className="text-xs text-muted-foreground">
+                                <p className="text-xs text-muted-foreground truncate">
                                   {result.employee_email}
                                 </p>
                               )}
@@ -575,7 +593,7 @@ const SearchDataView = () => {
                           </div>
                         </div>
                       ) : (
-                        <div className="pt-3 border-t">
+                        <div className="pt-4 border-t flex-1 flex items-center">
                           <p className="text-sm text-muted-foreground">
                             Not assigned to any employee
                           </p>

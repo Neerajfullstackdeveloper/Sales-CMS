@@ -38,12 +38,17 @@ const EmployeeManagementView = () => {
 
     setLoading(true);
     try {
+      // Map UI roles to DB enum roles (seo/web is stored as employee)
+      const dbRole =
+        selectedRole === "seo_website_employee" ? "employee" : selectedRole;
+
       const { error } = await supabase
         .from("user_roles")
         .upsert([
           {
             user_id: selectedUser,
-            role: selectedRole as "admin" | "team_lead" | "employee",
+            // Cast to any to allow new role values not yet in generated types (e.g., paid_team_lead)
+            role: dbRole as any,
           },
         ], { onConflict: "user_id,role" });
 
@@ -95,7 +100,11 @@ const EmployeeManagementView = () => {
                 <SelectContent>
                   <SelectItem value="admin">Admin</SelectItem>
                   <SelectItem value="team_lead">Team Lead</SelectItem>
+                  <SelectItem value="paid_team_lead">Paid Team Lead</SelectItem>
                   <SelectItem value="employee">Employee</SelectItem>
+                  <SelectItem value="seo_website_employee">
+                    SEO / Website (Employee)
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>

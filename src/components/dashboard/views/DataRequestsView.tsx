@@ -406,67 +406,82 @@ const DataRequestsView = () => {
         .is("assigned_at", null)
         .is("deleted_at", null)
         .order("created_at", { ascending: true })
-        .limit(GENERAL_ASSIGNMENT_BATCH_SIZE);
+        .limit(GENERAL_ASSIGNMENT_BATCH_SIZE * 3); // Fetch more to account for filtering
 
       if (companiesError) throw companiesError;
 
-      const companiesToAssign = unassignedCompanies || [];
-      const nowIso = new Date().toISOString();
-
-      // 3) Also refresh timestamps for companies already assigned to this employee with old timestamps
-      // This ensures that when admin approves, existing assignments get refreshed too
-      const { data: existingAssignments, error: existingError } = await supabase
-        .from("companies")
-        .select("id, assigned_at")
-        .eq("assigned_to_id", request.requested_by_id)
-        .is("deleted_at", null)
-        .not("assigned_at", "is", null);
-
-      let companiesToRefresh: string[] = [];
-      if (!existingError && existingAssignments) {
-        const now = Date.now();
-        const twentyFourHoursAgo = now - (24 * 60 * 60 * 1000);
-        
-        // Find companies with timestamps older than 24 hours
-        companiesToRefresh = existingAssignments
-          .filter((c: any) => {
-            if (!c.assigned_at) return false;
-            const assignedTime = new Date(c.assigned_at).getTime();
-            return assignedTime < twentyFourHoursAgo;
-          })
-          .map((c: any) => c.id);
-      }
-
-      const allCompanyIds = [
-        ...companiesToAssign.map((c: any) => c.id),
-        ...companiesToRefresh
-      ];
-
-      if (allCompanyIds.length === 0) {
-        toast.warning("Request approved but no companies were available to assign or refresh.");
+      // 2.5) Filter out companies that this employee has previously worked on
+      // Check if employee has any comments on these companies
+      if (!unassignedCompanies || unassignedCompanies.length === 0) {
+        const companiesToAssign: any[] = [];
+        toast.warning("Request approved but no companies available to assign.");
         fetchRequests();
         return;
       }
 
-      console.log("📋 Assigning/refreshing companies:", {
+      const unassignedCompanyIds = unassignedCompanies.map((c: any) => c.id);
+      
+      // Get all comments made by this employee on any of these companies
+      const { data: employeeComments, error: commentsError } = await supabase
+        .from("comments")
+        .select("company_id")
+        .eq("user_id", request.requested_by_id)
+        .in("company_id", unassignedCompanyIds);
+
+      if (commentsError) {
+        console.error("Error fetching employee comment history:", commentsError);
+        // Continue without filtering if error occurs
+      }
+
+      // Create a Set of company IDs that this employee has worked on before
+      const previouslyWorkedCompanyIds = new Set(
+        (employeeComments || []).map((comment: any) => comment.company_id)
+      );
+
+      // Filter out companies the employee has worked on before
+      const freshCompaniesForEmployee = unassignedCompanies.filter((company: any) => 
+        !previouslyWorkedCompanyIds.has(company.id)
+      );
+
+      console.log("🔍 Filtering companies for employee:", {
+        employeeId: request.requested_by_id,
+        employeeName: request.requested_by?.display_name,
+        totalUnassigned: unassignedCompanies.length,
+        previouslyWorked: previouslyWorkedCompanyIds.size,
+        availableForEmployee: freshCompaniesForEmployee.length,
+        willAssign: Math.min(freshCompaniesForEmployee.length, GENERAL_ASSIGNMENT_BATCH_SIZE)
+      });
+
+      // Limit to batch size
+      const companiesToAssign = freshCompaniesForEmployee.slice(0, GENERAL_ASSIGNMENT_BATCH_SIZE);
+      const nowIso = new Date().toISOString();
+
+      // Check if we have companies to assign
+      if (companiesToAssign.length === 0) {
+        toast.warning("Request approved but no fresh companies were available to assign.");
+        fetchRequests();
+        return;
+      }
+
+      const companyIds = companiesToAssign.map((c: any) => c.id);
+
+      console.log("📋 Assigning companies:", {
         newAssignments: companiesToAssign.length,
-        refreshCount: companiesToRefresh.length,
-        total: allCompanyIds.length,
         employeeId: request.requested_by_id,
         employeeName: request.requested_by?.display_name,
         assignedAt: nowIso,
-        companyIds: allCompanyIds.slice(0, 5) // Log first 5 IDs
+        companyIds: companyIds.slice(0, 5) // Log first 5 IDs
       });
 
-      // 4) Assign new companies and refresh timestamps for existing ones
-      // Always set a fresh assigned_at timestamp to ensure they're not filtered as outdated
+      // 3) Assign new companies ONLY (no refreshing old assignments)
+      // This ensures employee gets exactly GENERAL_ASSIGNMENT_BATCH_SIZE (25) companies
       const { data: updatedCompanies, error: assignError } = await supabase
         .from("companies")
         .update({ 
           assigned_to_id: request.requested_by_id, 
           assigned_at: nowIso 
         })
-        .in("id", allCompanyIds)
+        .in("id", companyIds)
         .select("id, assigned_at, assigned_to_id");
 
       if (assignError) {
@@ -476,6 +491,7 @@ const DataRequestsView = () => {
 
       console.log("✅ Companies assigned successfully:", {
         count: updatedCompanies?.length || 0,
+        expected: companiesToAssign.length,
         sample: updatedCompanies?.[0],
         allAssignedAt: updatedCompanies?.map((c: any) => c.assigned_at)
       });
@@ -493,23 +509,10 @@ const DataRequestsView = () => {
         console.warn("⚠️ Some companies have stale assigned_at timestamps:", staleCompanies);
       }
 
-      const newAssignedCount = companiesToAssign.length;
-      const refreshedCount = companiesToRefresh.length;
-      
-      let successMessage = "";
-      if (newAssignedCount > 0 && refreshedCount > 0) {
-        successMessage = `Request approved: ${newAssignedCount} new compan${newAssignedCount === 1 ? "y" : "ies"} assigned and ${refreshedCount} existing assignment${refreshedCount === 1 ? "" : "s"} refreshed for ${
-          request.requested_by?.display_name || "employee"
-        }.`;
-      } else if (newAssignedCount > 0) {
-        successMessage = `Request approved and ${newAssignedCount} compan${newAssignedCount === 1 ? "y" : "ies"} assigned to ${
-          request.requested_by?.display_name || "employee"
-        }.`;
-      } else if (refreshedCount > 0) {
-        successMessage = `Request approved: ${refreshedCount} existing assignment${refreshedCount === 1 ? "" : "s"} refreshed for ${
-          request.requested_by?.display_name || "employee"
-        }.`;
-      }
+      const assignedCount = updatedCompanies?.length || 0;
+      const successMessage = `Request approved! ${assignedCount} fresh compan${assignedCount === 1 ? "y" : "ies"} assigned to ${
+        request.requested_by?.display_name || "employee"
+      }.`;
       
       toast.success(successMessage);
 

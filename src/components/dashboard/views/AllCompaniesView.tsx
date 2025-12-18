@@ -36,7 +36,7 @@ const AllCompaniesView = ({ userRole }: AllCompaniesViewProps) => {
         )
       `)
       .is("deleted_at", null)
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: false });
 
     if (!error && data) {
       // Sort comments by created_at descending for each company to ensure latest comment is first
@@ -46,7 +46,22 @@ const AllCompaniesView = ({ userRole }: AllCompaniesViewProps) => {
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
         ) || []
       }));
-      setCompanies(companiesWithSortedComments);
+      
+      // Admin's "All Companies" should ONLY show:
+      // 1. Unassigned companies (assigned_to_id is null)
+      // 2. WITHOUT any comments (uncategorized/fresh data)
+      // 3. NOT in any deletion state (active data only)
+      // Once assigned, companies move to employee dashboard and should NOT appear here
+      const freshCompanies = companiesWithSortedComments.filter(company => {
+        const isUnassigned = !company.assigned_to_id;
+        const hasNoComments = !company.comments || company.comments.length === 0;
+        const isActive = !(company as any).deletion_state; // No deletion state = active
+        
+        // Show ONLY if unassigned AND has no comments AND is active (fresh data pool)
+        return isUnassigned && hasNoComments && isActive;
+      });
+      
+      setCompanies(freshCompanies);
     }
     setLoading(false);
   };

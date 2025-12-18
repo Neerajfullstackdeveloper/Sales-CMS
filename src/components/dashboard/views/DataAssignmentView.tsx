@@ -88,9 +88,41 @@ const DataAssignmentView = ({ userId }: DataAssignmentViewProps) => {
 
     setLoading(true);
     try {
+      // Check if this employee has previously worked on this company
+      const { data: previousComments, error: commentsError } = await supabase
+        .from("comments")
+        .select("id, category, created_at")
+        .eq("company_id", selectedCompany)
+        .eq("user_id", selectedMember)
+        .limit(1);
+
+      if (commentsError) {
+        console.error("Error checking employee history:", commentsError);
+        // Continue with assignment if check fails
+      }
+
+      // Warn if employee has worked on this company before
+      if (previousComments && previousComments.length > 0) {
+        const shouldContinue = confirm(
+          "⚠️ WARNING: This team member has previously worked on this company.\n\n" +
+          "Previous activity found. Are you sure you want to re-assign this company to them?\n\n" +
+          "Recommendation: Assign fresh data instead."
+        );
+        
+        if (!shouldContinue) {
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Proceed with assignment
+      const nowIso = new Date().toISOString();
       const { error } = await supabase
         .from("companies")
-        .update({ assigned_to_id: selectedMember })
+        .update({ 
+          assigned_to_id: selectedMember,
+          assigned_at: nowIso
+        })
         .eq("id", selectedCompany);
 
       if (error) throw error;
@@ -169,9 +201,34 @@ const DataAssignmentView = ({ userId }: DataAssignmentViewProps) => {
                 setSelectedMember(userId);
                 setLoading(true);
                 try {
+                  // Check if team leader has previously worked on this company
+                  const { data: previousComments } = await supabase
+                    .from("comments")
+                    .select("id")
+                    .eq("company_id", selectedCompany)
+                    .eq("user_id", userId)
+                    .limit(1);
+
+                  // Warn if already worked on before
+                  if (previousComments && previousComments.length > 0) {
+                    const shouldContinue = confirm(
+                      "⚠️ WARNING: You have previously worked on this company.\n\n" +
+                      "Are you sure you want to re-assign it to yourself?"
+                    );
+                    
+                    if (!shouldContinue) {
+                      setLoading(false);
+                      return;
+                    }
+                  }
+
+                  const nowIso = new Date().toISOString();
                   const { error } = await supabase
                     .from("companies")
-                    .update({ assigned_to_id: userId })
+                    .update({ 
+                      assigned_to_id: userId,
+                      assigned_at: nowIso
+                    })
                     .eq("id", selectedCompany);
                   if (error) throw error;
                   toast.success("Assigned to you");

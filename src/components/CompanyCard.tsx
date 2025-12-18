@@ -18,6 +18,7 @@ interface CompanyCardProps {
   canDelete?: boolean;
   showAssignedTo?: boolean;
   userRole?: string;
+  hideCategory?: boolean;
 }
 
 // Map database category names to display names
@@ -93,7 +94,7 @@ const getCategoryColor = (category: string) => {
   }
 };
 
-const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }: CompanyCardProps) => {
+const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole, hideCategory }: CompanyCardProps) => {
   const [commentText, setCommentText] = useState("");
   const [category, setCategory] = useState("general");
   const [commentDate, setCommentDate] = useState<string>("");
@@ -581,29 +582,83 @@ const CompanyCard = ({ company, onUpdate, canDelete, showAssignedTo, userRole }:
               </span>
             </div>
           )}
-          {lastComment && userRole !== "admin" && (
+          {!hideCategory && !lastComment && userRole !== "admin" && (
             <div className="flex flex-col gap-0.5 text-xs text-muted-foreground pt-1 border-t">
               <div>
                 <span className="font-semibold text-foreground">Current Category:</span>{" "}
-                <span>
-                  {getCategoryIcon(lastComment.category)} {getCategoryDisplayName(lastComment.category)}
-                </span>
+                <span className="text-blue-600 font-medium">🆕 Fresh data - Add first comment</span>
               </div>
               <div className="flex items-center gap-1">
                 <Clock className="h-3 w-3 text-primary/70" />
                 <span>
-                  <span className="font-semibold text-foreground">Category Updated:</span>{" "}
-                  {new Date(lastComment.created_at).toLocaleString('en-US', {
+                  <span className="font-semibold text-foreground">Assigned:</span>{" "}
+                  {company.assigned_at ? new Date(company.assigned_at).toLocaleString('en-US', {
                     year: 'numeric',
                     month: 'short',
                     day: 'numeric',
                     hour: '2-digit',
                     minute: '2-digit'
-                  })}
+                  }) : 'Recently'}
                 </span>
               </div>
             </div>
           )}
+          {!hideCategory && lastComment && userRole !== "admin" && (() => {
+            // Check if comment was made AFTER the current assignment
+            const assignedAt = company.assigned_at ? new Date(company.assigned_at).getTime() : 0;
+            const commentAt = new Date(lastComment.created_at).getTime();
+            const isCommentAfterAssignment = assignedAt === 0 || commentAt >= assignedAt;
+
+            // If comment is older than assignment, show as "Needs categorization"
+            if (!isCommentAfterAssignment) {
+              return (
+                <div className="flex flex-col gap-0.5 text-xs text-muted-foreground pt-1 border-t">
+                  <div>
+                    <span className="font-semibold text-foreground">Current Category:</span>{" "}
+                    <span className="text-yellow-600 font-medium">⏳ Needs re-categorization</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Clock className="h-3 w-3 text-primary/70" />
+                    <span>
+                      <span className="font-semibold text-foreground">Assigned:</span>{" "}
+                      {new Date(company.assigned_at).toLocaleString('en-US', {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </span>
+                  </div>
+                </div>
+              );
+            }
+
+            // Comment is after assignment - show normal category info
+            return (
+              <div className="flex flex-col gap-0.5 text-xs text-muted-foreground pt-1 border-t">
+                <div>
+                  <span className="font-semibold text-foreground">Current Category:</span>{" "}
+                  <span>
+                    {getCategoryIcon(lastComment.category)} {getCategoryDisplayName(lastComment.category)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Clock className="h-3 w-3 text-primary/70" />
+                  <span>
+                    <span className="font-semibold text-foreground">Category Updated:</span>{" "}
+                    {new Date(lastComment.created_at).toLocaleString('en-US', {
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {lastComment && userRole === "admin" && (

@@ -6,6 +6,8 @@ import { Loader2, CheckCircle } from "lucide-react";
 import EmployeeDashboard from "@/components/dashboard/EmployeeDashboard";
 import TeamLeadDashboard from "@/components/dashboard/TeamLeadDashboard";
 import AdminDashboard from "@/components/dashboard/AdminDashboard";
+import PaidLeadDashboard from "@/components/dashboard/PaidLeadDashboard";
+import SeoDashboard from "@/components/dashboard/SeoDashboard";
 import {
   Dialog,
   DialogContent,
@@ -46,7 +48,13 @@ const Dashboard = () => {
         .single();
 
       const roleData = roleResult.data;
-      const currentRole = roleData?.role || null;
+      let currentRole: string | null = roleData?.role || null;
+
+      // If this is an employee but marked as SEO / Website in metadata, route to SEO dashboard
+      const roleType = (user.user_metadata as any)?.role_type;
+      if (currentRole === "employee" && roleType === "seo_website") {
+        currentRole = "seo_website";
+      }
       
       // Check if cached role differs from database role (for debugging)
       const cachedAuth = sessionStorage.getItem("dashboard_auth");
@@ -75,28 +83,28 @@ const Dashboard = () => {
       }));
 
       // Fetch profile asynchronously (non-blocking)
-      supabase
-        .from("profiles")
-        .select("display_name")
-        .eq("id", user.id)
-        .single()
-        .then(({ data: profile }) => {
-          if (profile?.display_name) {
-            setUserName(profile.display_name);
-            // Update cache with display name
-            const cached = sessionStorage.getItem("dashboard_auth");
-            if (cached) {
-              try {
-                const parsed = JSON.parse(cached);
-                parsed.name = profile.display_name;
-                sessionStorage.setItem("dashboard_auth", JSON.stringify(parsed));
-              } catch {}
-            }
+      try {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("display_name")
+          .eq("id", user.id)
+          .single();
+
+        if (profile?.display_name) {
+          setUserName(profile.display_name);
+          // Update cache with display name
+          const cached = sessionStorage.getItem("dashboard_auth");
+          if (cached) {
+            try {
+              const parsed = JSON.parse(cached);
+              parsed.name = profile.display_name;
+              sessionStorage.setItem("dashboard_auth", JSON.stringify(parsed));
+            } catch {}
           }
-        })
-        .catch(() => {
-          // Ignore profile fetch errors, use default name
-        });
+        }
+      } catch {
+        // Ignore profile fetch errors, use default name
+      }
 
       // Show welcome dialog on first load (check session storage to avoid showing on refresh)
       const hasSeenWelcome = sessionStorage.getItem("hasSeenWelcome");
@@ -136,7 +144,12 @@ const Dashboard = () => {
         ]).then(([roleResult, profileResult]) => {
           const roleData = roleResult.data;
           const profile = profileResult.data;
-          const currentRole = roleData?.role || null;
+          let currentRole: string | null = roleData?.role || null;
+
+          const roleType = (session.user.user_metadata as any)?.role_type;
+          if (currentRole === "employee" && roleType === "seo_website") {
+            currentRole = "seo_website";
+          }
 
           // Always update role from database
           if (currentRole) {
@@ -162,6 +175,8 @@ const Dashboard = () => {
             setShowWelcomeDialog(true);
             sessionStorage.setItem("hasSeenWelcome", "true");
           }
+        }).catch(() => {
+          // Ignore role/profile refresh errors
         });
       }
     });
@@ -212,6 +227,10 @@ const Dashboard = () => {
         return "Admin";
       case "team_lead":
         return "Team Lead";
+      case "paid_team_lead":
+        return "Paid Lead";
+      case "seo_website":
+        return "SEO / Website";
       case "employee":
         return "Employee";
       default:
@@ -249,6 +268,8 @@ const Dashboard = () => {
 
       {userRole === "admin" && <AdminDashboard user={user!} />}
       {userRole === "team_lead" && <TeamLeadDashboard user={user!} />}
+      {userRole === "paid_team_lead" && <PaidLeadDashboard user={user!} />}
+      {userRole === "seo_website" && <SeoDashboard user={user!} />}
       {userRole === "employee" && <EmployeeDashboard user={user!} />}
     </>
   );

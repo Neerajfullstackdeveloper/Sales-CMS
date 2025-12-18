@@ -18,7 +18,7 @@ const Auth = () => {
   const [signupEmail, setSignupEmail] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
   const [signupName, setSignupName] = useState("");
-  const [signupRole, setSignupRole] = useState<"employee" | "team_lead" | "admin">("employee");
+  const [signupRole, setSignupRole] = useState<"employee" | "team_lead" | "admin" | "seo_website">("employee");
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,6 +56,8 @@ const Auth = () => {
         options: {
           data: {
             display_name: signupName,
+            // store more detailed intent for routing (SEO / Website etc.)
+            role_type: signupRole,
           },
           emailRedirectTo: `${window.location.origin}/dashboard`,
         },
@@ -70,11 +72,12 @@ const Auth = () => {
         let roleError: any | null = null;
 
         if (signupRole !== "admin") {
+          const dbRole = signupRole === "seo_website" ? "employee" : signupRole;
           const insertRes = await supabase
             .from("user_roles")
             .insert({
               user_id: data.user.id,
-              role: signupRole,
+              role: dbRole,
             });
           roleError = insertRes.error || null;
         }
@@ -191,7 +194,12 @@ const Auth = () => {
                 </div>
                 <div className="space-y-2 text-white/90">
                   <Label className="text-black/80" htmlFor="signup-role">Select Your Role</Label>
-                  <Select value={signupRole} onValueChange={(value: "employee" | "team_lead" | "admin") => setSignupRole(value)}>
+                  <Select
+                    value={signupRole}
+                    onValueChange={(value: "employee" | "team_lead" | "admin" | "seo_website") =>
+                      setSignupRole(value)
+                    }
+                  >
                     <SelectTrigger id="signup-role">
                       <SelectValue placeholder="Choose your role" />
                     </SelectTrigger>
@@ -199,6 +207,9 @@ const Auth = () => {
                       <SelectItem key="role-employee" value="employee">Employee</SelectItem>
                       <SelectItem key="role-team_lead" value="team_lead">Team Lead</SelectItem>
                       <SelectItem key="role-admin" value="admin">Admin</SelectItem>
+                      <SelectItem key="role-seo-website" value="seo_website">
+                        SEO / Website (Employee)
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">

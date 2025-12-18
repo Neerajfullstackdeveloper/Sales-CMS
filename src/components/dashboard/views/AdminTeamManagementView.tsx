@@ -56,7 +56,8 @@ const AdminTeamManagementView = () => {
           email,
           user_roles!inner(role)
         `)
-        .eq("user_roles.role", "team_lead")
+        // Include both regular team leads and paid team leads
+        .in("user_roles.role", ["team_lead", "paid_team_lead"] as any)
         .order("display_name", { ascending: true });
 
       if (error) throw error;
@@ -98,9 +99,18 @@ const AdminTeamManagementView = () => {
       .from("teams")
       .select("*")
       .eq("team_lead_id", teamLeadId)
-      .single();
+      .maybeSingle(); // avoid 406 when no team exists yet
 
     if (teamError) {
+      console.error("Error fetching team:", teamError);
+      setLoading(false);
+      return;
+    }
+
+    if (!teamData) {
+      // No team created yet for this lead
+      setTeam(null);
+      setMembers([]);
       setLoading(false);
       return;
     }

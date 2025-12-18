@@ -70,6 +70,17 @@ const GeneralDataView = ({ userId, userRole }: GeneralDataViewProps) => {
       fetchApprovedEditRequests();
       fetchShareIdMap();
     }
+    
+    // Listen for Facebook data updates (e.g., when deleted from another view)
+    const handleFacebookDataUpdate = () => {
+      fetchGeneralData();
+    };
+    
+    window.addEventListener("facebookDataUpdated", handleFacebookDataUpdate);
+    
+    return () => {
+      window.removeEventListener("facebookDataUpdated", handleFacebookDataUpdate);
+    };
   }, [userId, userRole]);
 
   const fetchApprovedEditRequests = async () => {
@@ -328,16 +339,20 @@ const GeneralDataView = ({ userId, userRole }: GeneralDataViewProps) => {
               ...fb,
               shared_at: shareDateMap[fb.id] || null,
               comments: (comments || []).filter((c: any) => c.facebook_data_id === fb.id)
-                .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+                .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()) // Descending: newest first
             }));
             
             // Exclude items with deletion_state set (they're in inactive or recycle bins)
             const generalFbData = fbWithComments.filter((fb: any) => {
-              // Exclude items with deletion_state set
+              // CRITICAL: Exclude items with deletion_state set (inactive, recycle bins)
+              // Check for any truthy deletion_state value (inactive, team_lead_recycle, admin_recycle, etc.)
               if (fb.deletion_state) return false;
               
+              // Also exclude items with deleted_at set
+              if (fb.deleted_at) return false;
+              
               if (!fb.comments || fb.comments.length === 0) return false;
-              const latestComment = fb.comments[0];
+              const latestComment = fb.comments[0]; // Now correctly gets the newest comment
               return latestComment && latestComment.category === "general";
             });
             
@@ -371,16 +386,20 @@ const GeneralDataView = ({ userId, userRole }: GeneralDataViewProps) => {
           const fbWithComments = fbData.map((fb: any) => ({
             ...fb,
             comments: (comments || []).filter((c: any) => c.facebook_data_id === fb.id)
-              .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+              .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()) // Descending: newest first
           }));
           
           // Exclude items with deletion_state set (they're in inactive or recycle bins)
           const generalFbData = fbWithComments.filter((fb: any) => {
-            // Exclude items with deletion_state set
+            // CRITICAL: Exclude items with deletion_state set (inactive, recycle bins)
+            // Check for any truthy deletion_state value (inactive, team_lead_recycle, admin_recycle, etc.)
             if (fb.deletion_state) return false;
             
+            // Also exclude items with deleted_at set
+            if (fb.deleted_at) return false;
+            
             if (!fb.comments || fb.comments.length === 0) return false;
-            const latestComment = fb.comments[0];
+            const latestComment = fb.comments[0]; // Now correctly gets the newest comment
             return latestComment && latestComment.category === "general";
           });
           

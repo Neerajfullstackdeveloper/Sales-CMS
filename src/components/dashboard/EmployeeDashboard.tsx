@@ -284,30 +284,103 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
         let categoryCount = 0;
 
         // Count companies with latest comment in this category
+        // Match HotDataView query structure exactly (including ordering)
         const { data: categoryCompanies } = await supabase
           .from("companies")
           .select(`
             id,
+            deletion_state,
             comments (id, category, created_at)
           `)
           .eq("assigned_to_id", user.id)
-          .is("deleted_at", null);
+          .is("deleted_at", null)
+          .order("created_at", { ascending: true })
+          .limit(200); // Match HotDataView limit
 
         if (categoryCompanies) {
-          const categoryCompaniesCount = categoryCompanies.filter((company: any) => {
-            if (!company.comments || company.comments.length === 0) return false;
-            const sortedComments = [...company.comments].sort((a: any, b: any) => 
-              new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-            );
-            const latestComment = sortedComments[0];
-            return latestComment && latestComment.category === category;
+          // Filter out companies with deletion_state set (matches HotDataView logic)
+          const activeCompanies = categoryCompanies.filter((company: any) => !company.deletion_state);
+          
+          // Filter companies where the latest comment has the matching category
+          // Use reduce() to find latest comment (matches HotDataView's exact logic)
+          const includedCompanyIds: string[] = [];
+          const excludedCompanyIds: string[] = [];
+          
+          const categoryCompaniesCount = activeCompanies.filter((company: any) => {
+            if (!company.comments || company.comments.length === 0) {
+              if (category === 'hot') {
+                excludedCompanyIds.push(company.id);
+                // console.log(`[Prime Pool Count] Excluding company ${company.id}: no comments`);
+              }
+              return false;
+            }
+            
+            // Find latest comment using reduce (matches HotDataView logic exactly)
+            const latestComment = company.comments.reduce((latest: any, current: any) => {
+              if (!latest) return current;
+              return new Date(current.created_at) > new Date(latest.created_at) ? current : latest;
+            }, null);
+            
+            const matches = latestComment && latestComment.category === category;
+            
+            if (category === 'hot') {
+              if (matches) {
+                includedCompanyIds.push(company.id);
+                // console.log(`[Prime Pool Count] Including company ${company.id}: latest comment category=${latestComment.category}, created_at=${latestComment.created_at}`);
+              } else {
+                excludedCompanyIds.push(company.id);
+                // console.log(`[Prime Pool Count] Excluding company ${company.id}: latest comment category=${latestComment?.category || 'none'}, created_at=${latestComment?.created_at || 'none'}`);
+              }
+            }
+            
+            return matches;
           }).length;
+          
+          if (category === 'hot') {
+            // console.log(`[Prime Pool Count] Companies count: ${categoryCompaniesCount} (included: [${includedCompanyIds.join(', ')}], excluded: [${excludedCompanyIds.join(', ')}])`);
+          }
+          
           categoryCount += categoryCompaniesCount;
         }
 
         // Count Facebook data with latest comment in this category
         if (shares && shares.length > 0) {
           const fbIds = shares.map((s: any) => s.facebook_data_id);
+          
+          // Fetch Facebook data records to check deletion_state - MUST include all shared IDs
+          const { data: fbDataRecords, error: fbDataError } = await (supabase
+            .from("facebook_data" as any)
+            .select("id, deletion_state, deleted_at")
+            .in("id", fbIds) as any);
+          
+          if (fbDataError) {
+            // console.warn(`Error fetching Facebook data for ${category} count:`, fbDataError);
+          }
+          
+          // Create a map of facebook_data_id -> deletion_state/deleted_at status
+          // Include ALL fbIds, marking missing ones as deleted (exclude from counts)
+          const fbDeletionMap = new Map<number, { deletion_state: any; deleted_at: any; exists: boolean }>();
+          
+          // First, mark all shared IDs as not existing
+          fbIds.forEach((id: number) => {
+            fbDeletionMap.set(id, {
+              deletion_state: null,
+              deleted_at: null,
+              exists: false
+            });
+          });
+          
+          // Then, update with actual records
+          if (fbDataRecords) {
+            fbDataRecords.forEach((fb: any) => {
+              fbDeletionMap.set(fb.id, {
+                deletion_state: fb.deletion_state,
+                deleted_at: fb.deleted_at,
+                exists: true
+              });
+            });
+          }
+          
           const { data: categoryFbComments } = await (supabase
             .from("facebook_data_comments" as any)
             .select("facebook_data_id, category, created_at")
@@ -324,9 +397,63 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
               }
             });
 
+            // Filter: only count Facebook data that:
+            // 1. Has latest comment matching the category
+            // 2. Does NOT have deletion_state set (not inactive/recycled)
+            // 3. Does NOT have deleted_at set
+            // 4. Actually exists in the database
+            // This matches the exact filtering logic from HotDataView, FollowUpDataView, GeneralDataView
+            const includedFbIds: number[] = [];
+            const excludedFbIds: number[] = [];
+            
             const categoryFbCount = Object.values(fbLatestComments).filter(
-              (comment: any) => comment.category === category
+              (comment: any) => {
+                // Must match category
+                if (comment.category !== category) return false;
+                
+                // Check deletion status - CRITICAL: exclude if deletion_state or deleted_at is set
+                const fbDeletion = fbDeletionMap.get(comment.facebook_data_id);
+                
+                // If Facebook data record not found in query, exclude it
+                if (!fbDeletion || !fbDeletion.exists) {
+                  if (category === 'hot') {
+                    excludedFbIds.push(comment.facebook_data_id);
+                    console.log(`[Prime Pool] Excluding FB ${comment.facebook_data_id}: record not found`);
+                  }
+                  return false;
+                }
+                
+                // Exclude if deletion_state is set (inactive, recycle bins) - matches HotDataView logic
+                if (fbDeletion.deletion_state) {
+                  if (category === 'hot') {
+                    excludedFbIds.push(comment.facebook_data_id);
+                    console.log(`[Prime Pool] Excluding FB ${comment.facebook_data_id}: deletion_state=${fbDeletion.deletion_state}`);
+                  }
+                  return false;
+                }
+                
+                // Exclude if deleted_at is set - matches HotDataView logic
+                if (fbDeletion.deleted_at) {
+                  if (category === 'hot') {
+                    excludedFbIds.push(comment.facebook_data_id);
+                    console.log(`[Prime Pool] Excluding FB ${comment.facebook_data_id}: deleted_at set`);
+                  }
+                  return false;
+                }
+                
+                if (category === 'hot') {
+                  includedFbIds.push(comment.facebook_data_id);
+                  console.log(`[Prime Pool] Including FB ${comment.facebook_data_id}: category=hot, deletion_state=${fbDeletion.deletion_state || 'null'}, deleted_at=${fbDeletion.deleted_at || 'null'}`);
+                }
+                
+                return true;
+              }
             ).length;
+            
+            if (category === 'hot') {
+              console.log(`[Prime Pool] Facebook data count: ${categoryFbCount} (included: [${includedFbIds.join(', ')}], excluded: [${excludedFbIds.join(', ')}])`);
+            }
+            
             categoryCount += categoryFbCount;
           }
         }
@@ -337,6 +464,11 @@ const EmployeeDashboard = ({ user }: EmployeeDashboardProps) => {
           'hot': 'hot',
           'general': 'general'
         };
+        
+        if (category === 'hot') {
+          console.log(`[Prime Pool] Total count (companies + Facebook): ${categoryCount}`);
+        }
+        
         counts[categoryMap[category]] = categoryCount;
       }
 

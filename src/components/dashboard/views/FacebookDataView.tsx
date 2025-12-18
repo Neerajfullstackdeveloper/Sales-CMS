@@ -619,6 +619,11 @@ const FacebookDataView = ({ userId, userRole }: FacebookDataViewProps) => {
 
         toast.success("Facebook data moved to Inactive section");
         fetchFacebookData();
+        
+        // Dispatch event to refresh all category views (Prime Pool, Active Pool, etc.)
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event("facebookDataUpdated"));
+        }
         return;
       }
 

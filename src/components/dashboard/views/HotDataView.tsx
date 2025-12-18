@@ -70,6 +70,17 @@ const HotDataView = ({ userId, userRole }: HotDataViewProps) => {
       fetchApprovedEditRequests();
       fetchShareIdMap();
     }
+    
+    // Listen for Facebook data updates (e.g., when deleted from another view)
+    const handleFacebookDataUpdate = () => {
+      fetchHotData();
+    };
+    
+    window.addEventListener("facebookDataUpdated", handleFacebookDataUpdate);
+    
+    return () => {
+      window.removeEventListener("facebookDataUpdated", handleFacebookDataUpdate);
+    };
   }, [userId, userRole]);
 
   const fetchApprovedEditRequests = async () => {
@@ -261,19 +272,36 @@ const HotDataView = ({ userId, userRole }: HotDataViewProps) => {
 
     if (!companiesError && userCompanies) {
       // Filter out companies with deletion_state
-      const activeCompanies = userCompanies.filter((company: any) => !company.deletion_state);
+      const activeCompanies = userCompanies.filter((company: any) => {
+        if (company.deletion_state) {
+          // console.log(`[HotDataView] Excluding company ${company.id}: deletion_state=${company.deletion_state}`);
+          return false;
+        }
+        return true;
+      });
       
       // Filter companies where the latest comment has "hot" category
       // Optimize: Only check latest comment instead of sorting all
       const hotCompanies = activeCompanies.filter((company: any) => {
-        if (!company.comments || company.comments.length === 0) return false;
+        if (!company.comments || company.comments.length === 0) {
+          console.log(`[HotDataView] Excluding company ${company.id}: no comments`);
+          return false;
+        }
         // Find latest comment without full sort
         const latestComment = company.comments.reduce((latest: any, current: any) => {
           if (!latest) return current;
           return new Date(current.created_at) > new Date(latest.created_at) ? current : latest;
         }, null);
-        return latestComment && latestComment.category === "hot";
+        const matches = latestComment && latestComment.category === "hot";
+        if (matches) {
+          console.log(`[HotDataView] Including company ${company.id}: latest comment category=hot`);
+        } else {
+          console.log(`[HotDataView] Excluding company ${company.id}: latest comment category=${latestComment?.category || 'none'}`);
+        }
+        return matches;
       });
+      
+      console.log(`[HotDataView] Total companies displayed: ${hotCompanies.length} (total fetched: ${userCompanies.length}, after deletion_state filter: ${activeCompanies.length})`);
       
       // Sort comments only for companies that passed filter (smaller set)
       const companiesWithSortedComments = hotCompanies.map((company: any) => ({
@@ -331,19 +359,43 @@ const HotDataView = ({ userId, userRole }: HotDataViewProps) => {
               ...fb,
               shared_at: shareDateMap[fb.id] || null,
               comments: (comments || []).filter((c: any) => c.facebook_data_id === fb.id)
-                .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+                .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()) // Descending: newest first
             }));
             
             // Filter Facebook data with hot category
             // Exclude items with deletion_state set (they're in inactive or recycle bins)
             const hotFbData = fbWithComments.filter((fb: any) => {
-              // Exclude items with deletion_state set
-              if (fb.deletion_state) return false;
+              // CRITICAL: Exclude items with deletion_state set (inactive, recycle bins)
+              // Check for any truthy deletion_state value (inactive, team_lead_recycle, admin_recycle, etc.)
+              if (fb.deletion_state) {
+                console.log(`[HotDataView] Excluding FB ${fb.id}: deletion_state=${fb.deletion_state}`);
+                return false;
+              }
               
-              if (!fb.comments || fb.comments.length === 0) return false;
-              const latestComment = fb.comments[0];
-              return latestComment && latestComment.category === "hot";
+              // Also exclude items with deleted_at set
+              if (fb.deleted_at) {
+                console.log(`[HotDataView] Excluding FB ${fb.id}: deleted_at set`);
+                return false;
+              }
+              
+              if (!fb.comments || fb.comments.length === 0) {
+                console.log(`[HotDataView] Excluding FB ${fb.id}: no comments`);
+                return false;
+              }
+              
+              const latestComment = fb.comments[0]; // Now correctly gets the newest comment
+              const matches = latestComment && latestComment.category === "hot";
+              
+              if (matches) {
+                console.log(`[HotDataView] Including FB ${fb.id}: category=hot`);
+              } else {
+                console.log(`[HotDataView] Excluding FB ${fb.id}: latest comment category=${latestComment?.category || 'none'}`);
+              }
+              
+              return matches;
             });
+            
+            console.log(`[HotDataView] Total Facebook items displayed: ${hotFbData.length}`);
             
             setFacebookData(hotFbData);
           } catch (err) {
@@ -376,16 +428,20 @@ const HotDataView = ({ userId, userRole }: HotDataViewProps) => {
           const fbWithComments = fbData.map((fb: any) => ({
             ...fb,
             comments: (comments || []).filter((c: any) => c.facebook_data_id === fb.id)
-              .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+              .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()) // Descending: newest first
           }));
           
           // Exclude items with deletion_state set (they're in inactive or recycle bins)
           const hotFbData = fbWithComments.filter((fb: any) => {
-            // Exclude items with deletion_state set
+            // CRITICAL: Exclude items with deletion_state set (inactive, recycle bins)
+            // Check for any truthy deletion_state value (inactive, team_lead_recycle, admin_recycle, etc.)
             if (fb.deletion_state) return false;
             
+            // Also exclude items with deleted_at set
+            if (fb.deleted_at) return false;
+            
             if (!fb.comments || fb.comments.length === 0) return false;
-            const latestComment = fb.comments[0];
+            const latestComment = fb.comments[0]; // Now correctly gets the newest comment
             return latestComment && latestComment.category === "hot";
           });
           
