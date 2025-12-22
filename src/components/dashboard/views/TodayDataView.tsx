@@ -305,7 +305,9 @@ const TodayDataView = ({ userId, userRole }: TodayDataViewProps) => {
       const todayCompanies = activeCompanies.filter((company: any) => {
         if (!company.comments || company.comments.length === 0) return false;
         return company.comments.some((comment: any) => 
-          comment.created_at.startsWith(today)
+          comment.created_at.startsWith(today) &&
+          // For employees, only include their own comments
+          (userRole !== "employee" || comment.user_id === userId)
         );
       });
 
@@ -379,7 +381,11 @@ const TodayDataView = ({ userId, userRole }: TodayDataViewProps) => {
                 return false; // Exclude - it's in inactive section
               }
               
-              return fb.comments.some((comment: any) => comment.created_at.startsWith(today));
+              return fb.comments.some((comment: any) => 
+                comment.created_at.startsWith(today) &&
+                // For employees, only include their own comments
+                (userRole !== "employee" || comment.user_id === userId)
+              );
             });
             
             setFacebookData(todayFbData);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,9 +13,12 @@ import { cn } from "@/lib/utils";
 interface PaidClientPoolViewProps {
   userRole?: string;
   defaultTab?: "all" | "completed" | "satisfied" | "dissatisfied" | "average" | "no-response";
+  focusCompanyId?: string;
+  focusOpenComments?: boolean;
+  focusToken?: number;
 }
 
-const PaidClientPoolView = ({ userRole, defaultTab = "all" }: PaidClientPoolViewProps) => {
+const PaidClientPoolView = ({ userRole, defaultTab = "all", focusCompanyId, focusOpenComments, focusToken }: PaidClientPoolViewProps) => {
   const [companies, setCompanies] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [commentTexts, setCommentTexts] = useState<Record<string, string>>({});
@@ -33,6 +36,25 @@ const PaidClientPoolView = ({ userRole, defaultTab = "all" }: PaidClientPoolView
   const [showNotifications, setShowNotifications] = useState(false);
   const [readNotificationIds, setReadNotificationIds] = useState<Set<string>>(new Set());
   const [webSeoFilter, setWebSeoFilter] = useState<"all" | "seo" | "website">("all");
+  const [highlightCompanyId, setHighlightCompanyId] = useState<string | null>(null);
+  const highlightTimeoutRef = useRef<number | null>(null);
+  const companyRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  type SatisfactionStatus = "satisfied" | "dissatisfied" | "average";
+
+  // Satisfaction is stored in comment_text markers: "SATISFACTION_STATUS: satisfied|dissatisfied|average"
+  // IMPORTANT: company.comments is sorted newest-first in fetchPaidClients(), so this returns the latest status.
+  const getSatisfactionStatusForCompany = (company: any): SatisfactionStatus | null => {
+    const markerComment = (company?.comments || []).find((c: any) =>
+      typeof c?.comment_text === "string" && c.comment_text.includes("SATISFACTION_STATUS:")
+    );
+    if (!markerComment?.comment_text) return null;
+    const text = markerComment.comment_text;
+    if (text.includes("SATISFACTION_STATUS: satisfied")) return "satisfied";
+    if (text.includes("SATISFACTION_STATUS: dissatisfied")) return "dissatisfied";
+    if (text.includes("SATISFACTION_STATUS: average")) return "average";
+    return null;
+  };
 
   useEffect(() => {
     fetchPaidClients();
@@ -109,6 +131,35 @@ const PaidClientPoolView = ({ userRole, defaultTab = "all" }: PaidClientPoolView
 
     fetchSeoEmployees();
   }, []);
+
+  // Focus/highlight a company card (used when clicking notifications)
+  // IMPORTANT: This hook must be declared before any early returns (like `if (loading) return ...`)
+  useEffect(() => {
+    if (!focusCompanyId || !focusToken) return;
+    if (loading) return;
+
+    // Open comments (best-effort)
+    if (focusOpenComments) {
+      setExpandedComments((prev) => ({ ...prev, [focusCompanyId]: true }));
+    }
+
+    // Highlight
+    setHighlightCompanyId(focusCompanyId);
+    if (highlightTimeoutRef.current) {
+      window.clearTimeout(highlightTimeoutRef.current);
+    }
+    highlightTimeoutRef.current = window.setTimeout(() => {
+      setHighlightCompanyId(null);
+    }, 6000);
+
+    // Scroll into view after DOM updates
+    window.setTimeout(() => {
+      const el = companyRefs.current[focusCompanyId];
+      if (el?.scrollIntoView) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 200);
+  }, [focusCompanyId, focusOpenComments, focusToken, loading]);
 
   const fetchPaidClients = async () => {
     setLoading(true);
@@ -487,42 +538,49 @@ const PaidClientPoolView = ({ userRole, defaultTab = "all" }: PaidClientPoolView
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
-
-      // Check if there's already a satisfaction status comment
-      const company = companies.find(c => c.id === companyId);
-      const existingSatisfactionComment = company?.comments?.find((c: any) => 
-        c.comment_text?.includes("SATISFACTION_STATUS:")
-      );
-
       const satisfactionText = `SATISFACTION_STATUS: ${status}`;
+      const nowIso = new Date().toISOString();
 
-      if (existingSatisfactionComment) {
-        // Update existing comment
-        const { error } = await supabase
-          .from("comments")
-          .update({
+      // Always INSERT a new satisfaction marker comment.
+      // Reason: UPDATE may fail due to RLS (if the existing row was created by someone else),
+      // and UPDATE doesn't change created_at, which can cause "latest status" detection bugs.
+      const { error } = await (supabase
+        .from("comments")
+        .insert([
+          {
+            company_id: companyId,
+            user_id: user.id,
             comment_text: satisfactionText,
-            comment_date: new Date().toISOString(),
-          })
-          .eq("id", existingSatisfactionComment.id);
+            // Keep this separate from SEO notifications and avoid impacting SEO flows
+            category: "paid" as any,
+            comment_date: nowIso,
+          },
+        ]) as any);
 
-        if (error) throw error;
-      } else {
-        // Create new comment
-        const { error } = await supabase
-          .from("comments")
-          .insert([
-            {
-              company_id: companyId,
-              user_id: user.id,
-              comment_text: satisfactionText,
-              category: "general" as any,
-              comment_date: new Date().toISOString(),
-            },
-          ]);
+      if (error) throw error;
 
-        if (error) throw error;
-      }
+      // Optimistic UI update: prepend comment so filters update immediately.
+      const optimisticComment = {
+        id: `temp-satisfaction-${companyId}-${Date.now()}`,
+        company_id: companyId,
+        user_id: user.id,
+        comment_text: satisfactionText,
+        category: "paid",
+        comment_date: nowIso,
+        created_at: nowIso,
+        user: { display_name: user.email?.split("@")[0] || "You", email: user.email },
+      } as any;
+
+      setCompanies((prev) =>
+        prev.map((c) =>
+          c.id === companyId
+            ? {
+                ...c,
+                comments: [optimisticComment, ...(c.comments || [])],
+              }
+            : c
+        )
+      );
 
       toast.success(`Client marked as ${status}`);
       fetchPaidClients();
@@ -580,35 +638,10 @@ const PaidClientPoolView = ({ userRole, defaultTab = "all" }: PaidClientPoolView
   });
 
   // Filter companies by satisfaction status
-  // Satisfaction status is stored in comments with pattern "SATISFACTION_STATUS: satisfied/dissatisfied/average/no-response"
-  const satisfiedCompanies = companies.filter((company) => {
-    const satisfactionComment = company.comments?.find((c: any) => 
-      c.comment_text?.includes("SATISFACTION_STATUS: satisfied")
-    );
-    return !!satisfactionComment;
-  });
-
-  const dissatisfiedCompanies = companies.filter((company) => {
-    const satisfactionComment = company.comments?.find((c: any) => 
-      c.comment_text?.includes("SATISFACTION_STATUS: dissatisfied")
-    );
-    return !!satisfactionComment;
-  });
-
-  const averageCompanies = companies.filter((company) => {
-    const satisfactionComment = company.comments?.find((c: any) => 
-      c.comment_text?.includes("SATISFACTION_STATUS: average")
-    );
-    return !!satisfactionComment;
-  });
-
-  const noResponseCompanies = companies.filter((company) => {
-    // No response = no satisfaction status comment at all
-    const hasSatisfactionStatus = company.comments?.some((c: any) => 
-      c.comment_text?.includes("SATISFACTION_STATUS:")
-    );
-    return !hasSatisfactionStatus;
-  });
+  const satisfiedCompanies = companies.filter((company) => getSatisfactionStatusForCompany(company) === "satisfied");
+  const dissatisfiedCompanies = companies.filter((company) => getSatisfactionStatusForCompany(company) === "dissatisfied");
+  const averageCompanies = companies.filter((company) => getSatisfactionStatusForCompany(company) === "average");
+  const noResponseCompanies = companies.filter((company) => getSatisfactionStatusForCompany(company) === null);
 
   // Build SEO/Web notifications from comments (category 'seo') across all paid companies
   const seoNotifications = companies
@@ -689,6 +722,24 @@ const PaidClientPoolView = ({ userRole, defaultTab = "all" }: PaidClientPoolView
     });
   }
 
+  // Notification click → navigate + highlight
+  const handleNotificationClick = (n: any) => {
+    const isCompletion = typeof n?.text === "string" && n.text.includes("TASK_COMPLETED:");
+    const targetView = isCompletion ? "web-seo" : "paid-clients";
+
+    window.dispatchEvent(
+      new CustomEvent("paidlead:navigate_to_company", {
+        detail: {
+          view: targetView,
+          companyId: n.companyId,
+          openComments: true,
+        },
+      })
+    );
+
+    setShowNotifications(false);
+  };
+
   return (
     <div className="space-y-6 relative">
       {/* Notifications dropdown */}
@@ -722,9 +773,11 @@ const PaidClientPoolView = ({ userRole, defaultTab = "all" }: PaidClientPoolView
                     : n.text;
 
                   return (
-                    <div
+                    <button
                       key={n.id}
-                      className="rounded-md border border-white/10 bg-muted/40 p-2 text-xs space-y-1"
+                      type="button"
+                      onClick={() => handleNotificationClick(n)}
+                      className="w-full text-left rounded-md border border-white/10 bg-muted/40 p-2 text-xs space-y-1 hover:bg-muted/60 transition-colors"
                     >
                       <div className="flex items-center justify-between gap-2">
                         <p className="font-semibold text-white truncate">
@@ -746,7 +799,7 @@ const PaidClientPoolView = ({ userRole, defaultTab = "all" }: PaidClientPoolView
                           {new Date(n.created_at).toLocaleTimeString()}
                         </span>
                       </div>
-                    </div>
+                    </button>
                   );
                 })
               )}
@@ -1023,22 +1076,23 @@ const PaidClientPoolView = ({ userRole, defaultTab = "all" }: PaidClientPoolView
             }
 
             // Get current satisfaction status
-            const satisfactionComment = company.comments?.find((c: any) => 
-              c.comment_text?.includes("SATISFACTION_STATUS:")
-            );
-            let currentSatisfaction: "satisfied" | "dissatisfied" | "average" | null = null;
-            if (satisfactionComment) {
-              if (satisfactionComment.comment_text?.includes("SATISFACTION_STATUS: satisfied")) {
-                currentSatisfaction = "satisfied";
-              } else if (satisfactionComment.comment_text?.includes("SATISFACTION_STATUS: dissatisfied")) {
-                currentSatisfaction = "dissatisfied";
-              } else if (satisfactionComment.comment_text?.includes("SATISFACTION_STATUS: average")) {
-                currentSatisfaction = "average";
-              }
-            }
+            const currentSatisfaction = getSatisfactionStatusForCompany(company);
 
             return (
-              <Card key={company.id} className="relative flex flex-col hover:shadow-xl transition-all duration-300 hover:scale-[1.02] border-2 hover:border-primary/50">
+              <div
+                key={company.id}
+                ref={(el) => {
+                  companyRefs.current[company.id] = el;
+                }}
+              >
+                <Card
+                  className={cn(
+                    "relative flex flex-col hover:shadow-xl transition-all duration-300 hover:scale-[1.02] border-2 hover:border-primary/50",
+                    highlightCompanyId === company.id
+                      ? "ring-2 ring-primary ring-offset-2 ring-offset-background shadow-2xl"
+                      : ""
+                  )}
+                >
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
@@ -1444,7 +1498,8 @@ const PaidClientPoolView = ({ userRole, defaultTab = "all" }: PaidClientPoolView
                   </div>
                   )}
                 </CardContent>
-              </Card>
+                </Card>
+              </div>
             );
           })}
         </div>

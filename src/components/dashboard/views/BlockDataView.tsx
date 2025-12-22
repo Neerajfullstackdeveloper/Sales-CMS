@@ -83,6 +83,14 @@ const BlockDataView = ({ userId, userRole }: BlockDataViewProps) => {
     };
   }, [userId, userRole]);
 
+  // Keep sidebar "Inactive Pool" count exactly in sync with this view
+  useEffect(() => {
+    const totalItems = companies.length + facebookData.length;
+    window.dispatchEvent(
+      new CustomEvent("blockCountUpdated", { detail: { count: totalItems } })
+    );
+  }, [companies.length, facebookData.length]);
+
   const fetchApprovedEditRequests = async () => {
     try {
       const { data, error } = await (supabase
@@ -505,9 +513,9 @@ const BlockDataView = ({ userId, userRole }: BlockDataViewProps) => {
       .limit(200); // Limit to prevent slow queries
 
     if (!companiesError && userCompanies) {
-      // Filter companies where:
+      // Filter companies where (from THIS employee's perspective):
       // 1. deletion_state is 'inactive', OR
-      // 2. latest comment has "block" category AND deletion_state is NULL (not deleted)
+      // 2. latest comment BY THIS EMPLOYEE has "block" category AND deletion_state is NULL (not deleted)
       // Exclude companies that have been moved to recycle bins (deletion_state is 'team_lead_recycle' or 'admin_recycle')
       const blockCompanies = userCompanies.filter((company: any) => {
         const deletionState = (company as any).deletion_state;
@@ -528,10 +536,14 @@ const BlockDataView = ({ userId, userRole }: BlockDataViewProps) => {
         // If deletion_state is set to anything else, don't show
         if (deletionState) return false;
         
-        // Otherwise, check if latest comment is 'block'
+        // Otherwise, check if latest comment BY THIS EMPLOYEE is 'block'
         if (!company.comments || company.comments.length === 0) return false;
-        // Find latest comment without full sort (optimization)
-        const latestComment = company.comments.reduce((latest: any, current: any) => {
+
+        const employeeComments = company.comments.filter((c: any) => c.user_id === userId);
+        if (employeeComments.length === 0) return false;
+
+        // Find latest employee comment without full sort (optimization)
+        const latestComment = employeeComments.reduce((latest: any, current: any) => {
           if (!latest) return current;
           return new Date(current.created_at) > new Date(latest.created_at) ? current : latest;
         }, null);
@@ -605,12 +617,16 @@ const BlockDataView = ({ userId, userRole }: BlockDataViewProps) => {
               // Show items with deletion_state='inactive' (but not in recycle bins)
               if (fb.deletion_state === 'inactive') return true;
               
-              // Also show items with block comment category (for backward compatibility)
+              // Also show items where the latest comment BY THIS EMPLOYEE is block
               // But only if deletion_state is NULL or not set (not in recycle)
               if (fb.deletion_state) return false; // If deletion_state is set to anything else, don't show
               
               if (!fb.comments || fb.comments.length === 0) return false;
-              const latestComment = fb.comments[fb.comments.length - 1]; // Get the last comment (most recent)
+
+              const employeeComments = fb.comments.filter((c: any) => c.user_id === userId);
+              if (employeeComments.length === 0) return false;
+
+              const latestComment = employeeComments[employeeComments.length - 1]; // comments sorted ascending
               return latestComment && latestComment.category === "block";
             });
             

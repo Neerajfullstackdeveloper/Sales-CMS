@@ -1,5 +1,5 @@
 import { User } from "@supabase/supabase-js";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { DollarSign, Globe, Smile, Frown, Meh, MessageCircle } from "lucide-react";
@@ -14,6 +14,33 @@ interface PaidLeadDashboardProps {
 const PaidLeadDashboard = ({ user }: PaidLeadDashboardProps) => {
   const navigate = useNavigate();
   const [currentView, setCurrentView] = useState("paid-clients");
+  const [focusRequest, setFocusRequest] = useState<{
+    companyId: string;
+    openComments?: boolean;
+    token: number;
+  } | null>(null);
+
+  useEffect(() => {
+    // Allows PaidClientPoolView notification clicks to navigate the sidebar and highlight the target card.
+    const handler = (event: Event) => {
+      const custom = event as CustomEvent<{
+        view: "paid-clients" | "web-seo" | "satisfied" | "dissatisfied" | "average" | "no-response";
+        companyId: string;
+        openComments?: boolean;
+      }>;
+
+      if (!custom.detail?.view || !custom.detail?.companyId) return;
+      setCurrentView(custom.detail.view);
+      setFocusRequest({
+        companyId: custom.detail.companyId,
+        openComments: custom.detail.openComments,
+        token: Date.now(),
+      });
+    };
+
+    window.addEventListener("paidlead:navigate_to_company", handler);
+    return () => window.removeEventListener("paidlead:navigate_to_company", handler);
+  }, []);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -39,12 +66,60 @@ const PaidLeadDashboard = ({ user }: PaidLeadDashboardProps) => {
       userName={user.email?.split("@")[0] || "Team Lead"}
       onLogout={handleLogout}
     >
-      {currentView === "paid-clients" && <PaidClientPoolView userRole="paid_team_lead" defaultTab="all" />}
-      {currentView === "web-seo" && <PaidClientPoolView userRole="paid_team_lead" defaultTab="completed" />}
-      {currentView === "satisfied" && <PaidClientPoolView userRole="paid_team_lead" defaultTab="satisfied" />}
-      {currentView === "dissatisfied" && <PaidClientPoolView userRole="paid_team_lead" defaultTab="dissatisfied" />}
-      {currentView === "average" && <PaidClientPoolView userRole="paid_team_lead" defaultTab="average" />}
-      {currentView === "no-response" && <PaidClientPoolView userRole="paid_team_lead" defaultTab="no-response" />}
+      {currentView === "paid-clients" && (
+        <PaidClientPoolView
+          userRole="paid_team_lead"
+          defaultTab="all"
+          focusCompanyId={focusRequest?.companyId}
+          focusOpenComments={focusRequest?.openComments}
+          focusToken={focusRequest?.token}
+        />
+      )}
+      {currentView === "web-seo" && (
+        <PaidClientPoolView
+          userRole="paid_team_lead"
+          defaultTab="completed"
+          focusCompanyId={focusRequest?.companyId}
+          focusOpenComments={focusRequest?.openComments}
+          focusToken={focusRequest?.token}
+        />
+      )}
+      {currentView === "satisfied" && (
+        <PaidClientPoolView
+          userRole="paid_team_lead"
+          defaultTab="satisfied"
+          focusCompanyId={focusRequest?.companyId}
+          focusOpenComments={focusRequest?.openComments}
+          focusToken={focusRequest?.token}
+        />
+      )}
+      {currentView === "dissatisfied" && (
+        <PaidClientPoolView
+          userRole="paid_team_lead"
+          defaultTab="dissatisfied"
+          focusCompanyId={focusRequest?.companyId}
+          focusOpenComments={focusRequest?.openComments}
+          focusToken={focusRequest?.token}
+        />
+      )}
+      {currentView === "average" && (
+        <PaidClientPoolView
+          userRole="paid_team_lead"
+          defaultTab="average"
+          focusCompanyId={focusRequest?.companyId}
+          focusOpenComments={focusRequest?.openComments}
+          focusToken={focusRequest?.token}
+        />
+      )}
+      {currentView === "no-response" && (
+        <PaidClientPoolView
+          userRole="paid_team_lead"
+          defaultTab="no-response"
+          focusCompanyId={focusRequest?.companyId}
+          focusOpenComments={focusRequest?.openComments}
+          focusToken={focusRequest?.token}
+        />
+      )}
     </DashboardLayout>
   );
 };
