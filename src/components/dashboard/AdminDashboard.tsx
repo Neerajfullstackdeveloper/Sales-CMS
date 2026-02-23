@@ -21,6 +21,7 @@ import {
   FileCheck,
   DollarSign,
   Search,
+  ShieldCheck,
 } from "lucide-react";
 import DashboardLayout from "./DashboardLayout";
 import AllCompaniesView from "./views/AllCompaniesView";
@@ -42,6 +43,7 @@ import FacebookDeleteDataView from "./views/FacebookDeleteDataView";
 import GeneralDeleteDataView from "./views/GeneralDeleteDataView";
 import SearchDataView from "./views/SearchDataView";
 import AdminTeamManagementView from "./views/AdminTeamManagementView";
+import LoginApprovalView from "./views/LoginApprovalView";
 import { Button } from "@/components/ui/button";
 
 interface AdminDashboardProps {
@@ -277,6 +279,47 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
         })()
       ]);
 
+      // Compute login approvals count: pending, non-admin users only
+      let loginApprovalsCount = 0;
+      try {
+        const { data: approvals } = await supabase
+          .from("login_approvals" as any)
+          .select("id, user_id, status, requested_at")
+          .order("requested_at", { ascending: false });
+
+        const approvalsData = approvals || [];
+        if (approvalsData.length > 0) {
+          const userIds = Array.from(new Set(approvalsData.map((a: any) => a.user_id)));
+          const { data: roles } = await supabase
+            .from("user_roles")
+            .select("user_id, role")
+            .in("user_id", userIds);
+
+          const rolesByUserId = (roles || []).reduce((acc: any, row: any) => {
+            acc[row.user_id] = row.role;
+            return acc;
+          }, {} as Record<string, string>);
+
+          // For each non-admin user, only consider the latest request
+          const latestByUser: Record<string, any> = {};
+          for (const a of approvalsData) {
+            if (rolesByUserId[a.user_id] === "admin") continue;
+            const existing = latestByUser[a.user_id];
+            if (!existing) {
+              latestByUser[a.user_id] = a;
+            } else if (new Date(a.requested_at).getTime() > new Date(existing.requested_at).getTime()) {
+              latestByUser[a.user_id] = a;
+            }
+          }
+
+          loginApprovalsCount = Object.values(latestByUser).filter(
+            (a: any) => a.status === "pending"
+          ).length;
+        }
+      } catch {
+        loginApprovalsCount = 0;
+      }
+
       const counts: Record<string, number> = {
         companies: companiesResult.count || 0,
         facebook: facebookResult.count || 0,
@@ -286,6 +329,7 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
         "paid-clients": paidClientsResult.count || 0,
         "facebook-delete": facebookDeleteResult.count || 0,
         "general-delete": generalDeleteResult.count || 0,
+        "login-approvals": loginApprovalsCount,
       };
 
       setCategoryCounts(counts);
@@ -301,11 +345,12 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
         "paid-clients": 0,
         "facebook-delete": 0,
         "general-delete": 0,
+        "login-approvals": 0,
       });
     }
   };
 
-  useEffect(() => {
+    useEffect(() => {
     let isMounted = true;
     let intervalId: NodeJS.Timeout | null = null;
     
@@ -363,10 +408,12 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
 
     window.addEventListener('facebookDataUpdated', handleDataUpdate);
     window.addEventListener('companyDataUpdated', handleDataUpdate);
+    window.addEventListener('loginApprovalsUpdated', handleDataUpdate);
     
     return () => {
       window.removeEventListener('facebookDataUpdated', handleDataUpdate);
       window.removeEventListener('companyDataUpdated', handleDataUpdate);
+      window.removeEventListener('loginApprovalsUpdated', handleDataUpdate);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -403,6 +450,7 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
     { id: "companies", label: "All Companies", icon: Building2, count: categoryCounts.companies },
     { id: "add", label: "Add Company", icon: Plus },
     { id: "approvals", label: "Company Approvals", icon: FileCheck, count: categoryCounts.approvals },
+    { id: "login-approvals", label: "Login Approvals", icon: ShieldCheck, count: categoryCounts["login-approvals"] },
     { id: "assign", label: "Assign Data", icon: UserCog },
     { id: "facebook", label: "Facebook Data", icon: Share2, count: categoryCounts.facebook },
     { id: "search", label: "Search Data", icon: Search },
@@ -490,6 +538,7 @@ const AdminDashboard = ({ user }: AdminDashboardProps) => {
       {currentView === "companies" && <AllCompaniesView userRole="admin" />}
       {currentView === "add" && <AddNewDataView userId={user.id} userRole="admin" />}
       {currentView === "approvals" && <CompanyApprovalView />}
+      {currentView === "login-approvals" && <LoginApprovalView />}
       {currentView === "assign" && <AdminDataAssignmentView />}
       {currentView === "facebook" && <FacebookDataView userId={user.id} userRole="admin" />}
       {currentView === "search" && <SearchDataView />}

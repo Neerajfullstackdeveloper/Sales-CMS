@@ -29,13 +29,28 @@ const Dashboard = () => {
 
   useEffect(() => {
     const checkAuth = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await supabase.auth.getUser()
+
+      const { data, error } = await supabase
+        .from('login_approvals')
+        .insert([
+          {
+            user_id: user.id,
+            status: 'pending'
+          }
+        ])
+        .select()
       
-      if (!user) {
-        sessionStorage.removeItem("dashboard_auth");
-        navigate("/auth");
-        return;
+      if (error) {
+        console.error(error)
       }
+      
+        
+        if (!user) {
+          sessionStorage.removeItem("dashboard_auth");
+          navigate("/auth");
+          return;
+        }
 
       setUser(user);
       setUserName(user.email?.split("@")[0] || "User"); // Set default name immediately

@@ -29,24 +29,109 @@ const Auth = () => {
     setLoading(true);
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      // First, authenticate the user
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: loginEmail,
         password: loginPassword,
       });
 
-      if (error) throw error;
+      if (authError) throw authError;
 
-      toast.success("Login successful!");
-      navigate("/dashboard");
+      if (!authData.user) {
+        throw new Error("Authentication failed");
+      }
+
+      // Check user role first - admins can bypass approval
+      const { data: roleData } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", authData.user.id)
+        .single();
+
+      if (roleData?.role === "admin") {
+        toast.success("Login successful!");
+        navigate("/dashboard");
+        return;
+      }
+
+      // For non-admins, enforce login approval
+      // Use maybeSingle + latest record to avoid 406 errors
+      const { data: approval } = await supabase
+        .from("login_approvals")
+        .select("*")
+        .eq("user_id", authData.user.id)
+        .order("requested_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      // If no approval record exists, create one and send email
+      if (!approval) {
+        // Get user metadata
+        const userName = authData.user.user_metadata?.display_name || authData.user.email?.split("@")[0] || "User";
+        
+        // Create approval request
+        const { error: insertError } = await supabase
+          .from("login_approvals")
+          .insert({
+            user_id: authData.user.id,
+            user_email: authData.user.email || loginEmail,
+            user_name: userName,
+            status: "pending",
+          });
+
+        if (insertError) {
+          console.error("Error creating approval request:", insertError);
+        }
+
+        // Send email notification to admin
+        await sendLoginApprovalEmail(authData.user.email || loginEmail, userName);
+
+        // Sign out the user until approved
+        await supabase.auth.signOut();
+        
+        toast.info("Your login request has been sent for approval. You will receive an email once approved.");
+        return;
+      }
+
+      // Check approval status
+      if (approval.status === "pending") {
+        await supabase.auth.signOut();
+        toast.info("Your login request is pending approval. Please wait for admin approval.");
+        return;
+      }
+
+      if (approval.status === "rejected") {
+        await supabase.auth.signOut();
+        toast.error("Your login request has been rejected. Please contact admin.");
+        return;
+      }
+
+      // If approved, allow login
+      if (approval.status === "approved") {
+        toast.success("Login successful!");
+        navigate("/dashboard");
+      }
     } catch (error: any) {
       if (error.message?.includes("email_not_confirmed")) {
         toast.error("Please check your email and click the confirmation link before logging in.");
+      } else if (error.message?.includes("Failed to fetch") || error.message?.includes("ERR_NAME_NOT_RESOLVED")) {
+        toast.error("Cannot connect to server. Please check your internet connection and Supabase configuration.", {
+          duration: 5000,
+        });
+        console.error("Supabase connection error:", error);
       } else {
         toast.error(error.message || "Login failed");
       }
     } finally {
       setLoading(false);
     }
+  };
+
+  const sendLoginApprovalEmail = async (userEmail: string, userName: string) => {
+    // Email notifications are disabled for now to avoid
+    // CORS / Edge Function issues during local development.
+    // Admins can review login requests directly in the dashboard.
+    console.info("Login approval requested for:", { userEmail, userName });
   };
 
   const handleForgotPassword = async (e: React.FormEvent) => {
